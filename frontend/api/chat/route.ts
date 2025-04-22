@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { client } from '@/lib/langgraph-client';
 import { langGraphServerClient } from '@/lib/langgraph-server';
 
+// Placeholder definition for THINKING_STAGES - Adjust if defined elsewhere
+const THINKING_STAGES = {
+  RETRIEVING: { stage: 'retrieving', description: 'Searching for relevant documents...' },
+  EVALUATING: { stage: 'evaluating', description: 'Evaluating document relevance...' },
+  // Add other stages as needed
+};
+
 // Enhanced retrieval information mapping
 function mapRetrievalStrategy(documents: any[]) {
   if (!documents || documents.length === 0) return documents;
@@ -72,70 +79,62 @@ export async function POST(request: NextRequest) {
           controller.enqueue(encoder.encode(`data: ${sseMessage}\n\n`));
         }
         
-        // Call LangGraph
-        const iterator = await client.threadContinue({
-          threadId,
-          inputs: { query: message }
-        }, {
-          stream: true,
-        });
+        // Call LangGraph server client to stream events for the thread
+        const iterator = langGraphServerClient.streamThreadEvents(threadId, { query: message });
         
         let prevNode = null;
         for await (const event of iterator) {
-          if (event.event_type === 'update') {
-            // Handle node-specific updates
-            if (event.data) {
-              const nodeUpdates = event.data;
-              
-              // Check if this update contains retrieved documents
-              if (nodeUpdates.retrieveDocuments && nodeUpdates.retrieveDocuments.documents) {
-                // Enhance documents with retrieval metadata
-                const enhancedDocs = mapRetrievalStrategy(nodeUpdates.retrieveDocuments.documents);
-                
-                // Send enhanced documents
-                const enhancedUpdate = {
-                  ...nodeUpdates,
-                  retrieveDocuments: {
-                    ...nodeUpdates.retrieveDocuments,
-                    documents: enhancedDocs
-                  }
-                };
-                sendSSE('updates', enhancedUpdate);
-              } else {
-                // Pass through other updates
-                sendSSE('updates', nodeUpdates);
+          // LangGraph streamLog yields events with 'ops'
+          for (const op of event.ops) {
+            // Check operation path to see if it's a state update
+            // path often looks like '/logs/...' or '/final_state'
+            // We are interested in updates to the state, particularly messages and documents
+            // Example path for state update: "/logs/retrieveDocuments/final_state"
+            if (op.op === 'add' || op.op === 'replace') { // Look for state updates
+              // Check if the update is for messages
+              if (op.path === `/logs/${op.run_id}/streamed_output/-` || op.path.endsWith('/messages/-')) {
+                 // Send message updates (might need specific handling based on exact path/value structure)
+                 // Assuming op.value contains the message object or array
+                 sendSSE('messages/partial', op.value); 
               }
-            }
-          } else if (event.event_type === 'intermediate_step') {
-            // Handle intermediate steps if needed
-          } else if (event.event_type === 'message') {
-            // Handle full messages
-            if (event.data?.messages) {
-              sendSSE('messages/partial', event.data.messages);
-            }
-          }
-          
-          const currentNode = event.data?.node;
-          if (currentNode !== prevNode) {
-            prevNode = currentNode;
-            if (currentNode.includes('retrieveDocuments')) {
-              controller.enqueue(sendThinkingUpdate({
-                thinking: true,
-                ...THINKING_STAGES.RETRIEVING,
-              }));
-            } else if (currentNode.includes('evaluateRetrievalQuality')) {
-              controller.enqueue(sendThinkingUpdate({
-                thinking: true,
-                ...THINKING_STAGES.EVALUATING,
-              }));
+              // Check if the update is for documents (assuming stored under retrieveDocuments node state)
+              else if (op.path.endsWith('/retrieveDocuments/final_state/documents')) {
+                 const documents = op.value ?? [];
+                 const enhancedDocs = mapRetrievalStrategy(documents);
+                 sendSSE('updates', { retrieveDocuments: { documents: enhancedDocs } });
+              }
+              // Check for node execution updates to drive 'thinking' state
+              else if (op.path.startsWith('/logs/') && op.path.endsWith('/final_state')) {
+                 const nodeNameMatch = op.path.match(/\/logs\/([^\/]+)\/final_state/);
+                 const currentNode = nodeNameMatch ? nodeNameMatch[1] : null;
+                 
+                 if (currentNode && currentNode !== prevNode) {
+                    prevNode = currentNode;
+                    if (currentNode.includes('retrieveDocuments')) {
+                      controller.enqueue(sendThinkingUpdate({
+                        thinking: true,
+                        ...THINKING_STAGES.RETRIEVING,
+                      }));
+                    } else if (currentNode.includes('evaluateRetrievalQuality')) {
+                      controller.enqueue(sendThinkingUpdate({
+                        thinking: true,
+                        ...THINKING_STAGES.EVALUATING,
+                      }));
+                    }
+                 }
+              } 
+              // Add more checks for other state updates if needed
             }
           }
         }
         
         // Fetch finalThreadState
         const finalThreadState = await langGraphServerClient.getThreadState(threadId);
-        const finalResponseContent = finalThreadState.response;
-        const finalSources = finalThreadState.sources;
+        
+        // Access response and documents (sources) from the .values property of the state
+        const finalValues = finalThreadState?.values ?? {};
+        const finalResponseContent = finalValues.response ?? 'Sorry, I encountered an issue generating a final response.'; // Provide fallback
+        const finalSources = finalValues.documents ?? []; // Assuming documents hold the sources
 
         // Send final response
         controller.enqueue(sendThinkingUpdate({
