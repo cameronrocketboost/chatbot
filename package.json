@@ -5,6 +5,7 @@
   "version": "0.0.1",
   "author": "Mayo Oshin",
   "license": "MIT",
+  "packageManager": "yarn@1.22.22",
   "workspaces": [
     "backend",
     "frontend"
