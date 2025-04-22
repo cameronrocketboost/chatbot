@@ -21,12 +21,15 @@
     "@langchain/langgraph-checkpoint": "^0.0.13"
   },
   "devDependencies": {
+    "@tsconfig/recommended": "^1.0.8",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.14.1",
     "turbo": "latest"
   },
   "dependencies": {
+    "@langchain/community": "^0.3.40",
     "@langchain/core": "^0.3.44",
     "@langchain/langgraph": "^0.2.63",
-    "@langchain/community": "^0.3.40",
     "@langchain/langgraph-checkpoint-postgres": "^0.0.4",
     "@supabase/supabase-js": "^2.49.4"
   }
