@@ -13,8 +13,14 @@ import {
   levenshteinDistance,
   calculateMatchConfidence 
 } from './utils.js';
+// import { loadEmbeddings } from "./utils.js"; // Commented out - unused
+import { ensureAgentConfiguration } from "../retrieval_graph/configuration.js"; // Corrected import name
+import { RecursiveCharacterTextSplitter } from "langchain/text_splitter";
+// import { DocumentRegistryEntry, findDocumentByName, getLatestDocument } from "./registry.js"; // Commented out - unused
+// import { SupabaseRpcResult } from './types.js'; // Commented out - unused
 
 // Interface for data returned by Supabase RPC (match_documents_enhanced)
+/* // Commented out - unused
 interface SupabaseRpcResult {
   content: string;
   metadata: Record<string, any>;
@@ -22,6 +28,7 @@ interface SupabaseRpcResult {
   id?: string | number;
   similarity?: number;
 }
+*/
 
 // Interface for retriever options
 interface RetrieverOptions {
@@ -176,7 +183,7 @@ export async function makeRetriever(_config: RunnableConfig) {
         console.log(`[Retrieval] Searching for: \"${query}\" with options:`, options);
         let exactMatchResults: Document[] = [];
         // Determine the source we *intend* to search for
-        const requestedSource = options?.['metadata.source']; 
+        const requestedSource = options?.filter?.['metadata.source'];
         const isLatestRequest = options?.['__LATEST__'] === true;
         
         // << Determine targeted filename AFTER potential __LATEST__ resolution >>
@@ -195,15 +202,30 @@ export async function makeRetriever(_config: RunnableConfig) {
           if (latestDocError) {
              console.error("[Retrieval] Error fetching latest document from registry:", latestDocError);
           } else if (latestDocData && latestDocData.length > 0) {
-            targetFilenameForSearch = latestDocData[0].filename;
-            console.log(`[Retrieval] Resolved __LATEST__ to filename: \"${targetFilenameForSearch}\"`);
-            filterUsedForSearch = { source: targetFilenameForSearch, filterApplied: `Latest Document (${targetFilenameForSearch})` };
+            // Check if filename exists and is a string before assigning
+            const latestFilename = latestDocData[0].filename;
+            if (typeof latestFilename === 'string' && latestFilename.length > 0) {
+                targetFilenameForSearch = latestFilename;
+                console.log(`[Retrieval] Resolved __LATEST__ to filename: \\\"${targetFilenameForSearch}\\\"`);
+                // Now targetFilenameForSearch is guaranteed to be a string here
+                filterUsedForSearch = { source: targetFilenameForSearch, filterApplied: `Latest Document (${targetFilenameForSearch})` };
+            } else {
+                console.warn("[Retrieval] __LATEST__ request succeeded but filename was null or empty in registry.");
+                // Handle case where filename is missing - don't set the filter
+                filterUsedForSearch = null; 
+                targetFilenameForSearch = null;
+            }
           } else {
             console.warn("[Retrieval] __LATEST__ request failed: Could not find latest document in registry.");
+             // Ensure filter is null if no document is found
+             filterUsedForSearch = null;
+             targetFilenameForSearch = null;
           }
         } else if (requestedSource) {
           targetFilenameForSearch = requestedSource;
-          filterUsedForSearch = { source: targetFilenameForSearch, filterApplied: options?.filter?.filterApplied || `Explicit: ${targetFilenameForSearch}` };
+          // Ensure source is not null or undefined before assigning
+          // Apply nullish coalescing to targetFilenameForSearch here as well
+          filterUsedForSearch = { source: targetFilenameForSearch ?? 'unknown', filterApplied: options?.filter?.filterApplied || `Explicit: ${targetFilenameForSearch ?? 'unknown'}` };
         } else {
           filterUsedForSearch = null; // No specific document target
         }
@@ -244,218 +266,141 @@ export async function makeRetriever(_config: RunnableConfig) {
 
             // Strategy Decision: Full Load or Vector Search?
             if (chunkCount !== null && chunkCount <= MAX_CHUNKS_FOR_FULL_LOAD) {
-              // **** Strategy: Load All Chunks ****
-              console.log(`[Retrieval] Chunk count (${chunkCount}) <= ${MAX_CHUNKS_FOR_FULL_LOAD}. Attempting full document load.`);
-              const { data: allChunksData, error: allChunksError } = await supabaseClient
+              // << Load full document >>
+              console.log(`[Retrieval] Loading full document for ${targetFilenameForSearch} (<= ${MAX_CHUNKS_FOR_FULL_LOAD} chunks)`);
+              const { data: fullDocData, error: fullDocError } = await supabaseClient
                 .from('documents')
                 .select('content, metadata')
-                .eq('metadata->>source', targetFilenameForSearch)
-                .order('metadata->chunkIndex', { ascending: true }); // Ensure correct order
-              
-              if (allChunksError) {
-                 console.error(`[Retrieval] Error fetching all chunks for ${targetFilenameForSearch}:`, allChunksError.message);
-                 // Fallback to vector search could be added here, but for now, return empty
-                 return []; 
-              } else if (allChunksData && allChunksData.length > 0) {
-                 console.log(`[Retrieval] Successfully loaded ${allChunksData.length} chunks for full document context.`);
-                 exactMatchResults = allChunksData.map((item: any) => new Document({ 
-                   pageContent: item.content || '',
-                    metadata: {
-                      ...item.metadata,
-                      retrieval: {
-                       retrievalStrategy: 'full-document-load',
-                       retrievalFilters: { source: targetFilenameForSearch },
-                       documentTitle: item.metadata?.title || targetFilenameForSearch
-                      },
-                    },
-                  }));
-                 // Set filter used for search state correctly for saving
-                 filterUsedForSearch = { source: targetFilenameForSearch, filterApplied: `Full Load: ${targetFilenameForSearch}` }; 
+                .eq('metadata->>source', targetFilenameForSearch); // Filter by source in metadata JSONB
+
+              if (fullDocError) {
+                console.error(`[Retrieval] Error fetching full document for ${targetFilenameForSearch}:`, fullDocError.message);
+                // Fallback to vector search if full load fails? Or just return empty? Let's try vector search.
+              } else if (fullDocData && fullDocData.length > 0) {
+                console.log(`[Retrieval] Successfully loaded ${fullDocData.length} chunks for full document ${targetFilenameForSearch}`);
+                exactMatchResults = fullDocData.map((row: any, index: number) => new Document({
+                  pageContent: row.content ?? '', // Ensure content is string
+                  metadata: {
+                    ...row.metadata,
+                    source: row.metadata?.source ?? 'unknown', // Handle null source
+                    chunkIndex: row.metadata?.chunkIndex ?? index, // Provide fallback index
+                    fullDocumentMatch: true // Mark as part of a full document match
+                  }
+                }));
+                console.log(`[Retrieval] Prepared ${exactMatchResults.length} documents from full load.`);
+                // Skip vector search since we have the full document
+                // Proceed directly to result processing
               } else {
-                 console.warn(`[Retrieval] Full document load query returned no results for ${targetFilenameForSearch}.`);
+                 console.log(`[Retrieval] No content found for full document load: ${targetFilenameForSearch}. Proceeding to vector search.`);
               }
             } else {
-              // **** Strategy: Vector Search within Document (RPC) ****
-              if (chunkCount === null) {
-                  console.log(`[Retrieval] Chunk count unknown for ${targetFilenameForSearch}. Using vector search.`);
-              } else {
-                  console.log(`[Retrieval] Chunk count (${chunkCount}) > ${MAX_CHUNKS_FOR_FULL_LOAD}. Using vector search.`);
+              // If we didn't load the full document (either too many chunks or error), proceed with vector search
+              if (exactMatchResults.length === 0) {
+                // << Vector Search within the specific document >>
+                console.log(`[Retrieval] Performing vector search within document: \"${targetFilenameForSearch}\"`);
+                // IMPORTANT: Use the refined query for vector search when targeting a specific document
+                const vectorSearchResults = await vectorStore.similaritySearch(
+                  finalSearchQuery, 
+                  options?.k || 10, // Use provided k or default
+                  { 'metadata.source': targetFilenameForSearch } // Apply the specific document filter
+                );
+                console.log(`[Retrieval] Vector search in ${targetFilenameForSearch} returned ${vectorSearchResults.length} results.`);
+                exactMatchResults = vectorSearchResults;
+                
+                // Add a flag to indicate these came from a targeted vector search
+                exactMatchResults.forEach(doc => {
+                    doc.metadata = { ...doc.metadata, targetedVectorSearch: true };
+                });
               }
-              console.log(`[Retrieval] Performing direct similarity search filtered by source: \"${targetFilenameForSearch}\" using query: \"${finalSearchQuery}\"`);
-              
-              // <<< BYPASS RPC and use standard similarity search with filter >>>
-              const filterOptions = { 'metadata.source': targetFilenameForSearch };
-              // Add other filters from options if necessary, but avoid overwriting source
-              if (options.filter) {
-                 for (const key in options.filter) {
-                     if (key !== 'metadata.source') {
-                         filterOptions[key] = options.filter[key];
-                     }
-                 }
-              }
+            }
 
-              exactMatchResults = await vectorStore.similaritySearch(
-                 finalSearchQuery, 
-                 options?.k || 5, 
-                 filterOptions
-              );
-              console.log(`[Retrieval] Direct similarity search found ${exactMatchResults.length} chunks for \"${targetFilenameForSearch}\".`);
-
-              // Add retrieval metadata
-              exactMatchResults = exactMatchResults.map((doc: Document) => { 
-                  if (!doc.metadata) doc.metadata = {};
-                  doc.metadata.retrieval = {
-                      retrievalStrategy: isLatestRequest ? 'latest-document-direct-search' : 'document-specific-direct-search',
-                      retrievalFilters: filterOptions,
-                      documentTitle: doc.metadata?.title || targetFilenameForSearch
-                  };
-                  doc.metadata.exactMatch = true; // Still consider it an exact doc match
-                  return doc;
-              });
-
-              // Ensure filterUsedForSearch reflects the target
-              filterUsedForSearch = { source: targetFilenameForSearch, filterApplied: options?.filter?.filterApplied || `Direct Filter: ${targetFilenameForSearch}` };
-
-              // <<< COMMENT OUT ORIGINAL RPC CALL AND FALLBACK >>>
-              /*
-               console.log(`[Retrieval] Attempting RPC match_documents_enhanced for: \"${targetFilenameForSearch}\" using query: \"${finalSearchQuery}\"`);
-               const { data: rpcData, error: rpcError } = await supabaseClient
-                 .rpc('match_documents_enhanced', {
-                   query_embedding: await embeddings.embedQuery(finalSearchQuery),
-                   document_name: targetFilenameForSearch,
-                   match_count: options?.k || 5
-                 });
-                 
-               if (rpcError) {
-                 console.warn(`[Retrieval] RPC match_documents_enhanced failed for \"${targetFilenameForSearch}\":`, rpcError.message);
-               } else if (rpcData && rpcData.length > 0) {
-                 // << Log the ACTUAL source metadata from the RPC results >>
-                 console.log("--- Checking RPC Result Metadata --- ");
-                 rpcData.slice(0, 3).forEach((item: SupabaseRpcResult, index: number) => {
-                   console.log(`  RPC Result [${index}] Metadata Source: ${item.metadata?.source}`);
-                 });
-                 console.log("-----------------------------------");
-                 // << End Log >>
-                 
-                 console.log(`[Retrieval] Found ${rpcData.length} chunks purportedly for document \"${targetFilenameForSearch}\" via RPC`); // Changed log msg slightly
-                 exactMatchResults = rpcData.map((item: SupabaseRpcResult) => new Document({ 
-                   pageContent: item.content,
-                   metadata: {
-                     ...item.metadata,
-                     exactMatch: true, // Indicate it came from a specific document search
-                     retrieval: {
-                       retrievalStrategy: isLatestRequest ? 'latest-document-rpc' : 'document-specific-rpc',
-                       retrievalFilters: { source: targetFilenameForSearch }, // Store the target filename
-                       documentTitle: item.metadata?.title || targetFilenameForSearch
-                     },
-                   },
-                 }));
-                 // Ensure filterUsedForSearch reflects the RPC target
-                 filterUsedForSearch = { source: targetFilenameForSearch, filterApplied: options?.filter?.filterApplied || `RPC Match: ${targetFilenameForSearch}` };
-               } else {
-                 console.warn(`[Retrieval] RPC returned no results for \"${targetFilenameForSearch}\".`);
-                 // Fallback logic is currently disabled, so result will be empty
-               }
-               */
-              } // End if(targetFilenameForSearch)
-              
-              // Sort results if any were found from Stage 1 (applies to both full load and RPC)
-              if (exactMatchResults.length > 0) {
-                exactMatchResults.sort((a, b) => (a.metadata?.chunkIndex ?? 0) - (b.metadata?.chunkIndex ?? 0));
-                console.log(`[Retrieval] Document-specific handling completed. Found ${exactMatchResults.length} results.`);
-                // Do not return early here, let the function return at the end
-              }
-
-          } catch (stage1Error: any) { 
-            console.error('[Retrieval] Error during document-specific handling stage:', stage1Error);
-            // Reset results and filter on error
-            exactMatchResults = [];
-            filterUsedForSearch = null;
+          } catch (docSpecificError) {
+            console.error(`[Retrieval] Error during document-specific handling for ${targetFilenameForSearch}:`, docSpecificError);
+            // Fallback to general vector search if document-specific logic fails
+            exactMatchResults = []; // Reset results
           }
-        } // --- End Stage 1 ---
-        
-        // --- Stage 2: Standard Vector Search (Only if Stage 1 found nothing AND wasn't targeting a specific doc) ---
-        if (exactMatchResults.length === 0 && !targetFilenameForSearch) {
-            console.log(`[Retrieval] Performing standard vector search (no specific document targeted or specific search yielded no results). Using query: \"${finalSearchQuery}\"`);
-            // Prepare filters for standard search
-            const baseOptions = { ...options }; 
-            let standardSearchFilters: Record<string, any> = {};
-            if (baseOptions.filter) {
-                standardSearchFilters = { ...baseOptions.filter };
-                delete standardSearchFilters['metadata.source']; 
-            }
-            delete baseOptions.filter;
-            delete baseOptions['__LATEST__']; 
-            const finalSearchOptions = { ...standardSearchFilters, ...baseOptions };
-
-            try {
-               let vectorResults = await vectorStore.similaritySearch(finalSearchQuery, options?.k || 4, finalSearchOptions); 
-              console.log(`[Retrieval] Standard vector search returned ${vectorResults.length} results`);
-              
-               vectorResults = vectorResults.map((doc: Document) => { 
-                if (!doc.metadata) doc.metadata = {};
-                doc.metadata.retrieval = {
-                  retrievalStrategy: 'vector-search',
-                   retrievalFilters: finalSearchOptions,
-                };
-                return doc;
-              });
-               exactMatchResults = vectorResults; // Assign to the main results variable
-
-            } catch (stage2Error: any) { 
-               console.error('[Retrieval] Error during standard vector search:', stage2Error);
-               exactMatchResults = []; // Ensure empty results on error
-            }
-        } else if (exactMatchResults.length === 0 && targetFilenameForSearch) {
-            console.log(`[Retrieval] Document-specific search for "${targetFilenameForSearch}" yielded no results. Returning empty.`);
-            // No standard search fallback if a specific document was requested but not found/yielded no chunks.
         }
 
-        // Log final snippets before returning
-        console.log("--- Final Retrieved Documents Snippets ---");
-        exactMatchResults.forEach((doc, index) => {
-            const snippet = doc.pageContent.substring(0, 150).replace(/\n/g, " ");
-            console.log(`  [${index}] Source: ${doc.metadata?.source}, Chunk: ${doc.metadata?.chunkIndex}, Strategy: ${doc.metadata?.retrieval?.retrievalStrategy || 'N/A'} => ${snippet}...`);
-        });
-        console.log("------------------------------------");
+        // --- Stage 2: General Vector Search (if no specific doc or specific failed) ---
+        let generalSearchResults: Document[] = [];
+        if (exactMatchResults.length === 0) {
+          console.log(`[Retrieval] Performing general vector search for query: \"${finalSearchQuery}\"`);
+          // Use the potentially refined query (finalSearchQuery)
+          generalSearchResults = await vectorStore.similaritySearch(
+            finalSearchQuery,
+            options?.k || 5, // Use a potentially smaller k for general search
+            options?.filter // Use any general filters provided
+          );
+          console.log(`[Retrieval] General vector search returned ${generalSearchResults.length} results.`);
+        }
 
-        console.log("--- Exiting retrieveDocuments (Success) ---");
-        console.log(`[RetrievalGraph] SAVING active_document_filter:`, JSON.stringify(filterUsedForSearch));
-        return { 
-          documents: exactMatchResults, 
-          active_document_filter: filterUsedForSearch,
-          new_explicit_filter_set: newExplicitFilterSet // Pass the flag through
+        // --- Stage 3: Combine and Process Results ---
+        // Prioritize exact match results if they exist
+        let combinedResults = exactMatchResults.length > 0 ? exactMatchResults : generalSearchResults;
+
+        // Simple de-duplication based on content (can be improved)
+        const uniqueDocs = new Map<string, Document>();
+        combinedResults.forEach(doc => {
+          // Normalize whitespace and content for better comparison
+          const normalizedContent = (doc.pageContent ?? '').replace(/\s+/g, ' ').trim();
+          if (!uniqueDocs.has(normalizedContent)) {
+            uniqueDocs.set(normalizedContent, doc);
+          }
+        });
+
+        const finalResults = Array.from(uniqueDocs.values());
+        
+        console.log(`[Retrieval] Returning ${finalResults.length} unique documents after processing.`);
+
+        // Include filter information used for the search in the final return
+        return {
+          documents: finalResults,
+          active_document_filter: filterUsedForSearch, // Return the filter actually used
+          new_explicit_filter_set: newExplicitFilterSet // Pass this through
         };
 
-      } catch (generalError: any) { 
-        console.error('[Retrieval] General error during retrieval invoke:', generalError);
-        console.log("--- Exiting retrieveDocuments (General Error) ---");
-        return { documents: [], active_document_filter: null, new_explicit_filter_set: false };
+      } catch (invokeError) {
+         console.error(`[Retrieval] Critical error in retriever invoke:`, invokeError);
+         // Return an empty result set in case of a major failure
+         return {
+           documents: [],
+           active_document_filter: null,
+           new_explicit_filter_set: false,
+         };
       }
-    }, // End of invoke method definition
-    
-    // Method to add documents
-    addDocuments: async (documents: Document[]) => {
-      // Try-catch for adding documents
-      try {
-        console.log(`[Retrieval] Adding ${documents.length} documents to vector store`);
-        await vectorStore.addDocuments(documents);
-        console.log('[Retrieval] Successfully added documents to vector store');
-        
-        // Optionally trigger registry update (might be redundant if DB trigger exists)
-        try {
-          await supabaseClient.rpc('populate_document_registry');
-          console.log('[Retrieval] Manually triggered document registry update after adding documents');
-        } catch (registryError: any) { // Add type
-          console.warn('[Retrieval] Error triggering document registry update:', registryError?.message || registryError);
-        }
-      } catch (addDocsError: any) { // Add type
-        console.error('[Retrieval] Error adding documents to vector store:', addDocsError);
-        throw addDocsError; // Rethrow to be handled by caller
-      }
-    } // End of addDocuments method definition
+    }, // End invoke
 
-  }; // End of the main returned object from makeRetriever
+    // Function to add or update documents (placeholder, might need adjustments)
+    addDocuments: async (docs: Document[], options?: { ids?: string[] }) => {
+      // Basic validation
+      if (!docs || docs.length === 0) {
+        console.log("[Retrieval] No documents provided to addDocuments.");
+        return [];
+      }
+
+      console.log(`[Retrieval] Attempting to add/update ${docs.length} documents.`);
+
+      // Example: Add a timestamp or version to metadata before adding
+      const docsWithMeta = docs.map(doc => ({
+        ...doc,
+        metadata: {
+          ...doc.metadata,
+          lastUpdated: new Date().toISOString(),
+          source: doc.metadata?.source ?? 'unknown', // Ensure source exists
+        },
+      }));
+      
+      try {
+         const resultIds = await vectorStore.addDocuments(docsWithMeta, options);
+         console.log(`[Retrieval] Successfully added/updated documents with IDs:`, resultIds);
+         return resultIds;
+      } catch (addError) {
+         console.error(`[Retrieval] Error adding documents to vector store:`, addError);
+         // Depending on requirements, might want to throw or handle differently
+         return []; // Return empty array on failure
+      }
+    } // End addDocuments
+  }; // End return object
 }
 
 // New function to retrieve the entire PowerPoint content based on the filename
@@ -514,7 +459,11 @@ export async function retrieveFullPowerPoint(
     const item = data[0];
     const fullDoc = new Document({
         pageContent: item.content || item.page_content,
-        metadata: item.metadata || {},
+        metadata: {
+            ...(item.metadata || {}),
+            source: item.metadata?.source ?? filename ?? '',
+            chunkIndex: item.metadata?.chunkIndex ?? -1
+        },
     });
     
     // Return it in an array as per the function signature
@@ -531,22 +480,27 @@ export async function retrieveFullPowerPoint(
   }
 }
 
-// Utility function to check if a query is about a PowerPoint file
+// Helper function to check if a query seems to be specifically about PowerPoint
 export function isPowerPointQuery(query: string): { isPPT: boolean, filename: string | null } {
-  const powerPointPatterns = [
-    /(?:show|get|retrieve|give me|view|display).*(?:powerpoint|pptx|presentation|slides|deck).*(?:called|named|titled|file:?)\s+["']?([^"\'?!.]+\.pptx?)["']?/i,
-    /(?:show|get|retrieve|give me|view|display).*(?:called|named|titled|file:?)\s+["']?([^"\'?!.]+\.pptx?)["']?.+(?:powerpoint|pptx|presentation|slides|deck)/i,
-    /(?:show|get|retrieve|give me|view|display).+(?:full|entire|complete|all).*(?:powerpoint|pptx|presentation|slides|deck).*(?:called|named|titled|file:?)\s+["']?([^"\'?!.]+\.pptx?)["']?/i,
-    /(?:powerpoint|pptx|presentation|slides|deck).*(?:called|named|titled|file:?)\s+["']?([^"\'?!.]+\.pptx?)["']?/i
-  ];
-  
-  for (const pattern of powerPointPatterns) {
-    const match = query.match(pattern);
-    if (match && match[1]) {
-      return { isPPT: true, filename: match[1].trim() };
-    }
+  const lowerQuery = query.toLowerCase();
+  const pptKeywords = ['slide', 'powerpoint', 'presentation', '.pptx'];
+  const containsKeyword = pptKeywords.some(kw => lowerQuery.includes(kw));
+
+  if (!containsKeyword) {
+    return { isPPT: false, filename: null };
   }
+
+  // Try to extract a filename if keywords are present
+  const extractedName = extractDocumentNameFromQuery(query);
   
-  return { isPPT: false, filename: null };
+  // Check if the extracted name actually ends with .pptx or .ppt
+  if (extractedName && /\.pptx?$/i.test(extractedName)) {
+     console.log(`[Retrieval] Identified PowerPoint query for specific file: ${extractedName}`);
+     return { isPPT: true, filename: extractedName };
+  }
+
+  // If keywords are present but no specific .pptx name, assume general PPT query
+  console.log(`[Retrieval] Identified general PowerPoint query (keywords found)`);
+  return { isPPT: true, filename: null }; 
 }
 

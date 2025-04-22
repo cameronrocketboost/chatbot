@@ -654,6 +654,7 @@ function createChunkGroups(documents: any[]): any[] {
 */
 
 // Helper to get a unique ID for a document
+/* // Commented out unused function
 function getDocId(doc: any): string {
   if (doc.id) {
     return doc.id.toString();
@@ -667,6 +668,7 @@ function getDocId(doc: any): string {
   const content = doc.pageContent || '';
   return `hash-${hashString(content)}`;
 }
+*/
 
 // Simple hash function for strings
 function hashString(str: string): number {

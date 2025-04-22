@@ -442,3 +442,19 @@ To make document retrieval more context-aware and improve the quality of respons
    * [x] Implement re-ranking of retrieved chunks based on relevance
    * [x] Create "chunk groups" that retrieve related chunks together
    * [x] Add query-based filtering options to narrow retrieval scope (Implemented LLM + Regex fallback for filename filters in `
+*   [ ] **Fix Frontend Deployment:** Add `packageManager` field to root `package.json` for Netlify/Yarn Workspaces.
+
+## Render Deployment Build Fixes (July 26)
+
+- **Goal:** Resolve TypeScript build errors reported by Render deployment logs.
+- **Files Affected:** `backend/src/retrieval_graph/graph.ts`, `backend/src/shared/retrieval.ts`
+- **Actions Taken:**
+    - Commented out unused `getDocId` function in `graph.ts`.
+    - Commented out unused `systemPrompt` variable in `graph.ts`.
+    - Commented out unused imports (`loadEmbeddings`, `DocumentRegistryEntry`, etc.) in `retrieval.ts`.
+    - Corrected import name from `ensureConfiguration` to `ensureAgentConfiguration` in `retrieval.ts`.
+    - Commented out unused `SupabaseRpcResult` interface in `retrieval.ts`.
+    - Corrected filter access from `options?.['metadata.source']` to `options?.filter?.['metadata.source']` in `retrieval.ts` (around line 189).
+    - Applied nullish coalescing (`?? ''` or `?? index`) to metadata properties (`source`, `chunkIndex`) inside `.map()` in `retrieval.ts` (around line 293).
+    - **Fixed TS error TS2322 on line 207 of `retrieval.ts`:** Added explicit check for non-null/non-empty `filename` from DB before assigning to `filterUsedForSearch.source` within the `isLatestRequest` block.
+- **Remaining Issue:** None identified from the original Render logs. Recommend re-deploying.
