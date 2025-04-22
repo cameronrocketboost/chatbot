@@ -444,17 +444,11 @@ To make document retrieval more context-aware and improve the quality of respons
    * [x] Add query-based filtering options to narrow retrieval scope (Implemented LLM + Regex fallback for filename filters in `
 *   [ ] **Fix Frontend Deployment:** Add `packageManager` field to root `package.json` for Netlify/Yarn Workspaces.
 
-## Render Deployment Build Fixes (July 26)
+## Frontend API Route (`/api/chat`) Fixes (July 26)
 
-- **Goal:** Resolve TypeScript build errors reported by Render deployment logs.
-- **Files Affected:** `backend/src/retrieval_graph/graph.ts`, `backend/src/shared/retrieval.ts`
+- **Goal:** Resolve TypeScript build errors reported by linter.
+- **File Affected:** `frontend/api/chat/route.ts`
 - **Actions Taken:**
-    - Commented out unused `getDocId` function in `graph.ts`.
-    - Commented out unused `systemPrompt` variable in `graph.ts`.
-    - Commented out unused imports (`loadEmbeddings`, `DocumentRegistryEntry`, etc.) in `retrieval.ts`.
-    - Corrected import name from `ensureConfiguration` to `ensureAgentConfiguration` in `retrieval.ts`.
-    - Commented out unused `SupabaseRpcResult` interface in `retrieval.ts`.
-    - Corrected filter access from `options?.['metadata.source']` to `options?.filter?.['metadata.source']` in `retrieval.ts` (around line 189).
-    - Applied nullish coalescing (`?? ''` or `?? index`) to metadata properties (`source`, `chunkIndex`) inside `.map()` in `retrieval.ts` (around line 293).
-    - **Fixed TS error TS2322 on line 207 of `retrieval.ts`:** Added explicit check for non-null/non-empty `filename` from DB before assigning to `filterUsedForSearch.source` within the `isLatestRequest` block.
-- **Remaining Issue:** None identified from the original Render logs. Recommend re-deploying.
+    - Defined placeholder `THINKING_STAGES` constant to resolve `Cannot find name` errors.
+    - Corrected final state access to use `finalThreadState.values.response` and `finalThreadState.values.documents` (with fallbacks).
+- **Remaining Issue:** Persistent TS error `Property '...' does not exist on type 'LangGraphBase'` when attempting to invoke the graph stream using `client` or `langGraphServerClient` (`.stream()`, `.streamLog()`, `.streamThreadEvents()`). Requires manual review of `@/lib/langgraph-client.ts` and `@/lib/langgraph-server.ts` to ensure correct client initialization, typing, and usage of the appropriate method for streaming thread events.
