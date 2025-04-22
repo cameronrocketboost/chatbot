@@ -464,3 +464,9 @@ To make document retrieval more context-aware and improve the quality of respons
     - Commented out unused `ensureAgentConfiguration` import in `retrieval.ts`.
     - Commented out unused `RecursiveCharacterTextSplitter` import in `retrieval.ts`.
 - **Remaining Issue:** Build errors should be resolved. The separate frontend issue (`Property '...' does not exist on type 'LangGraphBase'` in `frontend/api/chat/route.ts`) still requires manual investigation of client setup.
+
+## Render Deployment Start Command Fix (July 26)
+
+- **Goal:** Fix deployment failure caused by incorrect Start Command.
+- **Issue:** Render logs show `error Command "langgraph:start" not found.`
+- **Action Required:** Update the **Start Command** in Render service settings for the backend. Change it from `yarn langgraph:start` to the correct script defined in `backend/package.json` (e.g., `yarn start` or `yarn serve`).

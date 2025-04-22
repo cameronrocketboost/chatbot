@@ -8,6 +8,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "start": "node dist/server.js", 
     "clean": "rm -rf dist",
     "demo": "npx tsx demo.ts",
     "test": "jest",
