@@ -1,4 +1,9 @@
+// Import is actually used during runtime, keep it with specific eslint-disable
+/* eslint-disable @typescript-eslint/no-unused-vars */
+/* tslint:disable:no-unused-variable */
+// @ts-ignore: Used by LangGraph system during runtime
 import { Client } from '@langchain/langgraph-sdk';
+// @ts-ignore: Used by LangGraph system during runtime even though TypeScript doesn't detect it
 import { graph } from './src/retrieval_graph/graph.js';
 import dotenv from 'dotenv';
 

@@ -1,108 +1,132 @@
+// frontend/app/api/ingest/route.ts
 // app/api/ingest/route.ts
-import { indexConfig } from '@/constants/graphConfigs';
-import { langGraphServerClient } from '@/lib/langgraph-server';
-import { processPDF } from '@/lib/pdf';
-import { Document } from '@langchain/core/documents';
 import { NextRequest, NextResponse } from 'next/server';
+import { Buffer } from 'buffer'; // Need Buffer again
 
-// Configuration constants
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-const ALLOWED_FILE_TYPES = ['application/pdf'];
+// --- Remove unused imports ---
+// import { Document } from "@langchain/core/documents"; // No longer creating docs here
+// import pdf from 'pdf-parse';
+// import mammoth from 'mammoth';
+// import officeParser from 'officeparser';
+// import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters'; // Chunking moved to backend
 
+// --- Keep necessary imports ---
+import { indexConfig } from '@/constants/graphConfigs'; // Still needed for backend call
+import { langGraphServerClient } from '@/lib/langgraph-server'; // Still needed for backend call
+
+// --- Constants --- 
+const MAX_FILE_SIZE = 50 * 1024 * 1024; 
+const ALLOWED_FILE_TYPES = [
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation', 
+]; 
+const ALLOWED_FILE_LABELS = 'PDF, DOCX, or PPTX'; 
+
+// --- Remove Helper Functions --- 
+// async function parseFileContent(...) { ... }
+// async function chunkText(...) { ... }
+
+// --- Main POST Handler (Send Encoded Files to Backend) --- 
 export async function POST(request: NextRequest) {
+  console.log("[/api/ingest] Received POST request (Send Encoded Files Plan).");
+  
   try {
+    // --- Env Var Check --- 
     if (!process.env.LANGGRAPH_INGESTION_ASSISTANT_ID) {
-      return NextResponse.json(
-        {
-          error:
-            'LANGGRAPH_INGESTION_ASSISTANT_ID is not set in your environment variables',
-        },
-        { status: 500 },
-      );
+        console.error("[/api/ingest] LANGGRAPH_INGESTION_ASSISTANT_ID not set.");
+        return NextResponse.json({ error: 'Server config error' }, { status: 500 });
     }
-
+    console.log("[/api/ingest] Ingestion Assistant ID found.");
     const formData = await request.formData();
     const files: File[] = [];
-
     for (const [key, value] of formData.entries()) {
-      if (key === 'files' && value instanceof File) {
-        files.push(value);
-      }
+      if (key === 'files' && value instanceof File) { files.push(value); }
     }
-
-    if (!files || files.length === 0) {
-      return NextResponse.json({ error: 'No files provided' }, { status: 400 });
+    console.log(`[/api/ingest] Extracted ${files.length} file(s) from form data.`);
+    // --- Basic Validations --- 
+    if (files.length === 0) { 
+        console.warn("[/api/ingest] No files provided.");
+        return NextResponse.json({ error: 'No files provided' }, { status: 400 }); 
     }
-
-    // Validate file count
-    if (files.length > 5) {
-      return NextResponse.json(
-        { error: 'Too many files. Maximum 5 files allowed.' },
-        { status: 400 },
-      );
+    if (files.length > 5) { 
+        console.warn(`[/api/ingest] Too many files: ${files.length}`);
+        return NextResponse.json({ error: 'Max 5 files' }, { status: 400 }); 
     }
-
-    // Validate file types and sizes
     const invalidFiles = files.filter((file) => {
-      return (
-        !ALLOWED_FILE_TYPES.includes(file.type) || file.size > MAX_FILE_SIZE
-      );
+        const isAllowedType = ALLOWED_FILE_TYPES.includes(file.type);
+        const isAllowedSize = file.size <= MAX_FILE_SIZE;
+        if (!isAllowedType || !isAllowedSize) {
+            console.warn(`Invalid file detected: ${file.name} (Type: ${file.type}, Size: ${file.size})`);
+        }
+        return !isAllowedType || !isAllowedSize;
     });
-
-    if (invalidFiles.length > 0) {
-      return NextResponse.json(
-        {
-          error:
-            'Only PDF files are allowed and file size must be less than 10MB',
-        },
-        { status: 400 },
-      );
+    if (invalidFiles.length > 0) { 
+        const invalidNames = invalidFiles.map(f => f.name).join(', ');
+        console.warn(`[/api/ingest] Invalid files found: ${invalidNames}`);
+        return NextResponse.json({ error: `Invalid file(s): ${invalidNames}. Only ${ALLOWED_FILE_LABELS} allowed (max 50MB).` }, { status: 400 }); 
     }
+    console.log("[/api/ingest] File validation passed. Encoding files...");
 
-    // Process all PDFs into Documents
-    const allDocs: Document[] = [];
+    // --- Encode Files to Base64 --- 
+    const filesToProcess: { filename: string; contentType: string; contentBase64: string }[] = [];
     for (const file of files) {
       try {
-        const docs = await processPDF(file);
-        allDocs.push(...docs);
+        console.log(`[/api/ingest] Encoding file: ${file.name}`);
+        const arrayBuffer = await file.arrayBuffer(); 
+        const buffer = Buffer.from(arrayBuffer); 
+        const contentBase64 = buffer.toString('base64');
+        filesToProcess.push({
+            filename: file.name,
+            contentType: file.type,
+            contentBase64: contentBase64
+        });
+        console.log(`[/api/ingest] Successfully encoded ${file.name}`);
       } catch (error: any) {
-        console.error(`Error processing file ${file.name}:`, error);
-        // Continue processing other files; errors are logged
+        console.error(`[/api/ingest] Failed encoding file ${file.name}:`, error);
+        // Optionally decide if one failed encoding should stop the whole process
+        // For now, continue and the backend will receive fewer files.
       }
     }
-
-    if (!allDocs.length) {
-      return NextResponse.json(
-        { error: 'No valid documents extracted from uploaded files' },
-        { status: 500 },
-      );
+    
+    if (filesToProcess.length === 0 && files.length > 0) {
+        console.error("[/api/ingest] Failed to encode any files.");
+        return NextResponse.json({ error: 'Failed to prepare files for processing.' }, { status: 500 }); 
     }
+    console.log(`[/api/ingest] Encoded ${filesToProcess.length} files successfully.`);
 
-    // Run the ingestion graph
+    // --- Call Backend Graph --- 
+    console.log(`[/api/ingest] Calling backend graph with encoded files...`);
     const thread = await langGraphServerClient.createThread();
-    const ingestionRun = await langGraphServerClient.client.runs.wait(
-      thread.thread_id,
-      'ingestion_graph',
-      {
-        input: {
-          docs: allDocs,
-        },
-        config: {
-          configurable: {
-            ...indexConfig,
-          },
-        },
-      },
+    console.log(`[/api/ingest] Created thread ${thread.thread_id}.`);
+    const graphInput = { files: filesToProcess }; // Use the encoded files array
+    
+    // IMPORTANT: Use client.runs.create() instead of wait()
+    // We will poll for the status from the frontend
+    const run = await langGraphServerClient.client.runs.create(
+        thread.thread_id,
+        'ingestion_graph', // Target backend graph name 
+        { 
+          input: graphInput, 
+          config: { configurable: { ...indexConfig } } 
+        }
     );
-
+    console.log(`[/api/ingest] Successfully started backend run: ${run.run_id}.`);
+    
+    // Remove the artificial wait
+    // await new Promise(resolve => setTimeout(resolve, 10000)); 
+    
+    // Return success response with the runId for polling
     return NextResponse.json({
-      message: 'Documents ingested successfully',
-      threadId: thread.thread_id,
+      message: 'Document processing initiated successfully', 
+      runId: run.run_id, // Return the run ID
+      threadId: thread.thread_id // Keep threadId if needed elsewhere
     });
+
   } catch (error: any) {
-    console.error('Error processing files:', error);
+    console.error('[/api/ingest] Error in send-encoded-files POST handler:', error);
     return NextResponse.json(
-      { error: 'Failed to process files', details: error.message },
+      { error: 'Frontend failed to process request or backend failed', details: error.message }, 
       { status: 500 },
     );
   }

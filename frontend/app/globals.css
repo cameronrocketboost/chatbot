@@ -2,68 +2,102 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  :root {
-    --background: 0 0% 100%;
-    --foreground: 0 0% 3.9%;
+/* Updated Sladen palette based on design guide */
+:root {
+  /* Sladen Palette HSL Approximations */
+  /* Teal/Aqua: #6FC1B6 -> ~174, 47%, 60% */
+  --sladen-teal-h: 174;
+  --sladen-teal-s: 47%;
+  --sladen-teal-l: 60%;
+  
+  /* Deep Blue: #0A2E4C -> ~205, 75%, 17% */
+  --sladen-navy-h: 205;
+  --sladen-navy-s: 75%;
+  --sladen-navy-l: 17%;
+  
+  /* Bright Red: #E24B4B -> ~0, 73%, 59% */
+  --sladen-red-h: 0;
+  --sladen-red-s: 73%;
+  --sladen-red-l: 59%;
+  
+  /* Soft Peach: #FFDAD6 -> ~7, 100%, 92% */
+  --sladen-peach-h: 7;
+  --sladen-peach-s: 100%;
+  --sladen-peach-l: 92%;
+  
+  /* Gray: #B0BEC5 -> ~200, 15%, 73% (keeping existing) */
+  --sladen-gray-h: 200;
+  --sladen-gray-s: 15%;
+  --sladen-gray-l: 73%;
+  
+  /* White: #FFFFFF -> 0, 0%, 100% */
+  --sladen-white-h: 0;
+  --sladen-white-s: 0%;
+  --sladen-white-l: 100%;
+  
+  /* Light Theme Mapping */
+  --background: 0 0% 100%; /* Pure White for background */
+  --foreground: var(--sladen-navy-h) var(--sladen-navy-s) var(--sladen-navy-l); /* Sladen Navy */
 
-    --card: 0 0% 100%;
-    --card-foreground: 0 0% 3.9%;
+  --card: var(--sladen-white-h) var(--sladen-white-s) var(--sladen-white-l);
+  --card-foreground: var(--sladen-navy-h) var(--sladen-navy-s) var(--sladen-navy-l);
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 3.9%;
+  --popover: var(--sladen-white-h) var(--sladen-white-s) var(--sladen-white-l);
+  --popover-foreground: var(--sladen-navy-h) var(--sladen-navy-s) var(--sladen-navy-l);
 
-    --primary: 0 0% 9%;
-    --primary-foreground: 0 0% 98%;
+  --primary: var(--sladen-teal-h) var(--sladen-teal-s) var(--sladen-teal-l); /* Sladen Teal */
+  --primary-foreground: var(--sladen-navy-h) var(--sladen-navy-s) var(--sladen-navy-l); /* Navy on Teal */ 
 
-    --secondary: 0 0% 96.1%;
-    --secondary-foreground: 0 0% 9%;
+  --secondary: var(--sladen-peach-h) var(--sladen-peach-s) var(--sladen-peach-l); /* Sladen Peach */
+  --secondary-foreground: var(--sladen-navy-h) var(--sladen-navy-s) var(--sladen-navy-l); /* Navy on Peach */ 
 
-    --muted: 0 0% 96.1%;
-    --muted-foreground: 0 0% 45.1%;
+  --muted: var(--sladen-gray-h) var(--sladen-gray-s) calc(var(--sladen-gray-l) + 15%); /* Lighter Gray */
+  --muted-foreground: var(--sladen-navy-h) var(--sladen-navy-s) calc(var(--sladen-navy-l) + 20%); /* Lighter Navy */
 
-    --accent: 0 0% 96.1%;
-    --accent-foreground: 0 0% 9%;
+  --accent: var(--sladen-red-h) var(--sladen-red-s) var(--sladen-red-l); /* Sladen Red */
+  --accent-foreground: var(--sladen-white-h) var(--sladen-white-s) var(--sladen-white-l); /* White on Red */
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
+  --destructive: var(--sladen-red-h) var(--sladen-red-s) var(--sladen-red-l); /* Sladen Red */
+  --destructive-foreground: var(--sladen-white-h) var(--sladen-white-s) var(--sladen-white-l); /* White */
 
-    --border: 0 0% 89.8%;
-    --input: 0 0% 89.8%;
-    --ring: 0 0% 3.9%;
+  /* Borders and Input based on Gray */
+  --border: var(--sladen-gray-h) var(--sladen-gray-s) calc(var(--sladen-gray-l) + 10%); /* Light Gray Border */
+  --input: var(--sladen-gray-h) var(--sladen-gray-s) calc(var(--sladen-gray-l) + 10%); /* Light Gray Input */
+  --ring: var(--sladen-teal-h) var(--sladen-teal-s) var(--sladen-teal-l); /* Teal Ring */
 
-    --radius: 0.5rem;
-  }
+  --radius: 0.5rem;
+}
 
-  .dark {
-    --background: 0 0% 3.9%;
-    --foreground: 0 0% 98%;
+.dark {
+  /* Dark Theme Mapping based on Sladen's navy-dominant design */
+  --background: var(--sladen-navy-h) var(--sladen-navy-s) var(--sladen-navy-l); /* Sladen Navy */
+  --foreground: var(--sladen-white-h) var(--sladen-white-s) var(--sladen-white-l); /* White */
 
-    --card: 0 0% 3.9%;
-    --card-foreground: 0 0% 98%;
+  --card: var(--sladen-navy-h) var(--sladen-navy-s) calc(var(--sladen-navy-l) + 5%); /* Slightly Lighter Navy */
+  --card-foreground: var(--sladen-white-h) var(--sladen-white-s) var(--sladen-white-l);
 
-    --popover: 0 0% 3.9%;
-    --popover-foreground: 0 0% 98%;
+  --popover: var(--sladen-navy-h) var(--sladen-navy-s) calc(var(--sladen-navy-l) + 2%); /* Dark Popover */
+  --popover-foreground: var(--sladen-white-h) var(--sladen-white-s) var(--sladen-white-l);
 
-    --primary: 0 0% 98%;
-    --primary-foreground: 0 0% 9%;
+  --primary: var(--sladen-teal-h) var(--sladen-teal-s) var(--sladen-teal-l); /* Sladen Teal */
+  --primary-foreground: var(--sladen-white-h) var(--sladen-white-s) var(--sladen-white-l); /* White on Teal */
 
-    --secondary: 0 0% 14.9%;
-    --secondary-foreground: 0 0% 98%;
+  --secondary: var(--sladen-peach-h) var(--sladen-peach-s) var(--sladen-peach-l); /* Sladen Peach */
+  --secondary-foreground: var(--sladen-navy-h) var(--sladen-navy-s) var(--sladen-navy-l); /* Navy on Peach */
 
-    --muted: 0 0% 14.9%;
-    --muted-foreground: 0 0% 63.9%;
+  --muted: var(--sladen-navy-h) var(--sladen-navy-s) calc(var(--sladen-navy-l) + 7%); /* Slightly Lighter Navy */
+  --muted-foreground: var(--sladen-gray-h) var(--sladen-gray-s) var(--sladen-gray-l); /* Sladen Gray */
 
-    --accent: 0 0% 14.9%;
-    --accent-foreground: 0 0% 98%;
+  --accent: var(--sladen-red-h) var(--sladen-red-s) var(--sladen-red-l); /* Sladen Red */
+  --accent-foreground: var(--sladen-white-h) var(--sladen-white-s) var(--sladen-white-l); /* White */
 
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
+  --destructive: var(--sladen-red-h) var(--sladen-red-s) calc(var(--sladen-red-l) - 10%); /* Slightly Darker Red */
+  --destructive-foreground: var(--sladen-white-h) var(--sladen-white-s) var(--sladen-white-l);
 
-    --border: 0 0% 14.9%;
-    --input: 0 0% 14.9%;
-    --ring: 0 0% 83.1%;
-  }
+  /* Borders and Input based on Lighter Navy */
+  --border: var(--sladen-navy-h) var(--sladen-navy-s) calc(var(--sladen-navy-l) + 10%); /* Lighter Navy Border */
+  --input: var(--sladen-navy-h) var(--sladen-navy-s) calc(var(--sladen-navy-l) + 10%); /* Lighter Navy Input */
+  --ring: var(--sladen-teal-h) var(--sladen-teal-s) var(--sladen-teal-l); /* Teal Ring */
 }
 
 @layer base {
@@ -72,6 +106,40 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* Add font-smoothing for better text rendering */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-family: 'Poppins', 'Nunito', 'Open Sans', sans-serif;
   }
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-bold;
+  }
+  h1, h2 {
+    letter-spacing: 0.025em;
+  }
+}
+
+/* Add custom styles for hand-drawn, whimsical feel */
+.sladen-btn {
+  @apply relative overflow-hidden rounded-md transition-all duration-300;
+  position: relative;
+}
+
+.sladen-btn::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: right;
+  transition: transform 0.3s ease;
+}
+
+.sladen-btn:hover::after {
+  transform: scaleX(1);
+  transform-origin: left;
 }
 
