@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { StateGraph, START, END } from '@langchain/langgraph';
 import { AgentStateAnnotation } from './state.js';
-import { makeRetriever, retrieveFullPowerPoint, isPowerPointQuery, extractDocumentNameFromQuery } from '../shared/retrieval.js';
+import { makeRetriever, /* retrieveFullPowerPoint, isPowerPointQuery, */ extractDocumentNameFromQuery } from '../shared/retrieval.js'; // Commented out unused imports
 import { formatDocs } from './utils.js';
 import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { 
@@ -15,10 +15,10 @@ import {
 } from './configuration.js';
 import { loadChatModel } from '../shared/utils.js';
 import { createClient } from '@supabase/supabase-js';
-import { ChatOpenAI } from '@langchain/openai';
+// import { ChatOpenAI } from '@langchain/openai'; // Commented out unused import
 import { EventEmitter } from 'events';
 // Import the base checkpointer interface
-import { BaseCheckpointSaver } from "@langchain/langgraph";
+// import { BaseCheckpointSaver } from "@langchain/langgraph"; // Commented out unused import
 // Revert to importing PostgresSaver from its specific package
 // import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres"; // Comment out unused import causing lint error
 import { MemorySaver } from "@langchain/langgraph";
@@ -290,7 +290,7 @@ async function routeQuery(
  */
 export async function extractQueryFilters(
   state: typeof AgentStateAnnotation.State,
-  config: RunnableConfig
+  _config: RunnableConfig // Prefixed unused parameter
 ): Promise<{ 
   queryFilters: DocumentFilters; 
   cleanedQuery: string; 
@@ -350,7 +350,7 @@ export async function extractQueryFilters(
 
   // --- 1. Try explicit extraction first --- 
   let explicitExtractionResult: string | null = null;
-  let explicitFoundFilename = false; 
+  // let explicitFoundFilename = false; // Commented out unused variable
   try {
     explicitExtractionResult = extractDocumentNameFromQuery(currentQuery);
     if (explicitExtractionResult && explicitExtractionResult !== '__LATEST__') {
@@ -392,15 +392,15 @@ export async function extractQueryFilters(
           finalActiveFilter = { source: matchedFilename, filterApplied: filterApplied };
           cleanedQuery = currentQuery; // Maybe clean based on matchedFilename later? For now, keep original.
           queryFilters = { "metadata.source": matchedFilename, filterApplied: filterApplied };
-          explicitFoundFilename = true; 
+          // explicitFoundFilename = true; // Commented out unused variable assignment
         } else {
           console.log(`[RetrievalGraph] Explicit regex match \"${explicitExtractionResult}\" failed registry validation (Confidence: ${confidence.toFixed(2)} < ${CONFIDENCE_THRESHOLD}).`);
-          explicitFoundFilename = false;
+          // explicitFoundFilename = false; // Commented out unused variable assignment
           // Keep existing filter (or null)
         }
       } else {
         console.log(`[RetrievalGraph] Explicit regex match \"${explicitExtractionResult}\" not found in registry.`);
-        explicitFoundFilename = false;
+        // explicitFoundFilename = false; // Commented out unused variable assignment
         // Keep existing filter (or null)
       }
 
@@ -411,10 +411,10 @@ export async function extractQueryFilters(
       // << FIX: Clear the active filter when __LATEST__ is requested >>
       console.log("[RetrievalGraph] Clearing active_document_filter because __LATEST__ was requested.");
       finalActiveFilter = null; 
-      explicitFoundFilename = false; // Not a specific filename
+      // explicitFoundFilename = false; // Commented out unused variable assignment
     } else {
        console.log("[RetrievalGraph] Explicit extraction did not find any potential match.");
-       explicitFoundFilename = false;
+       // explicitFoundFilename = false; // Commented out unused variable assignment
     }
   } catch (error) {
     console.error("[RetrievalGraph] Error during explicit filter extraction/validation:", error);
@@ -424,7 +424,7 @@ export async function extractQueryFilters(
       ? { 'metadata.source': existingFilter.source, filterApplied: existingFilter.filterApplied || `Initial: ${existingFilter.source}` }
       : {};
     cleanedQuery = currentQuery; // Revert cleaned query too
-    explicitFoundFilename = (existingFilter !== null);
+    // explicitFoundFilename = (existingFilter !== null); // Commented out unused variable assignment
     newExplicitFilterSet = false; // Ensure flag is false on error
   }
   
@@ -602,40 +602,14 @@ export async function retrieveDocuments(
 }
 
 // Helper function to extract document-specific key terms from a query
+/* // Commented out unused function
 function extractDocumentKeyTerms(query: string): string[] {
   // Corporate document identifiers - capture numbers, names, and key terms
   const corporatePatterns = [
-    /\b(\d+)[_-](\w+)\b/i,                  // Match patterns like "1485_Merck" 
-    /\b(merck|fertility|forum|emd|boon)\b/i, // Match key company/product terms
-    /\b(\d{4})\b/i                           // Match 4-digit numbers that could be document IDs
-  ];
-  
-  const keyTerms: string[] = [];
-  
-  // Extract matches from each pattern
-  corporatePatterns.forEach(pattern => {
-    const matches = query.match(new RegExp(pattern, 'gi')) || [];
-    matches.forEach((match: string) => {
-      // Clean up the match and add to key terms
-      const term = match.trim().toLowerCase();
-      if (term && term.length > 2 && !keyTerms.includes(term)) {
-        keyTerms.push(term);
-      }
-    });
-  });
-  
-  // Check for quoted terms which likely refer to document names
-  const quotedTerms = query.match(/["']([^"']+)["']/g) || [];
-  quotedTerms.forEach((term: string) => {
-    // Remove quotes and clean
-    const cleanTerm = term.replace(/["']/g, '').trim();
-    if (cleanTerm && cleanTerm.length > 2 && !keyTerms.includes(cleanTerm)) {
-      keyTerms.push(cleanTerm);
-    }
-  });
-  
+// ... (rest of function commented out) ...
   return keyTerms;
 }
+*/
 
 // Helper function to extract key terms from a query
 function extractKeyTerms(query: string): string[] {
@@ -660,99 +634,24 @@ function extractKeyTerms(query: string): string[] {
 }
 
 // Helper function to re-rank documents based on keyword matches
+/* // Commented out unused function
 function reRankByKeywordMatch(documents: any[], keyTerms: string[]): any[] {
   // Calculate a keyword match score for each document
   const scoredDocs = documents.map(doc => {
-    const content = doc.pageContent.toLowerCase();
-    let score = 0;
-    
-    // For each key term, check if it exists in the document
-    for (const term of keyTerms) {
-      // Direct match
-      if (content.includes(term)) {
-        score += 10; // Base score for any match
-        
-        // Exact word match (with word boundaries)
-        const exactMatches = content.match(new RegExp(`\\b${term}\\b`, 'gi'));
-        if (exactMatches) {
-          score += exactMatches.length * 5; // Additional points for exact matches
-        }
-      }
-    }
-    
-    return { doc, score };
-  });
-  
-  // Sort by score (descending) and extract just the documents
-  const reranked = scoredDocs
-    .sort((a, b) => b.score - a.score)
-    .map(item => item.doc);
-    
+// ... (rest of function commented out) ...
   return reranked;
 }
+*/
 
 // Helper function to create chunk groups by finding adjacent and related chunks
+/* // Commented out unused function
 function createChunkGroups(documents: any[]): any[] {
   // Exit early if we don't have enough documents to group
   if (documents.length <= 1) {
-    return documents;
-  }
-  
-  console.log('[RetrievalGraph] Creating chunk groups from results');
-  
-  // Track which documents we've already included in groups
-  const includedDocs = new Set<string>();
-  const resultGroups: any[] = [];
-  
-  // Process each document as a potential group seed
-  for (const doc of documents) {
-    // Skip if this document has already been included in a group
-    if (includedDocs.has(getDocId(doc))) {
-      continue;
-    }
-    
-    // Start a new group with this document
-    const group = [doc];
-    includedDocs.add(getDocId(doc));
-    
-    // Try to find adjacent chunks from the same source
-    if (doc.metadata && doc.metadata.source && doc.metadata.chunkIndex !== undefined) {
-      const source = doc.metadata.source;
-      const currentIndex = doc.metadata.chunkIndex;
-      
-      // Look for adjacent chunks (before and after)
-      for (const otherDoc of documents) {
-        if (includedDocs.has(getDocId(otherDoc))) {
-          continue; // Skip already included docs
-        }
-        
-        if (otherDoc.metadata && 
-            otherDoc.metadata.source === source && 
-            otherDoc.metadata.chunkIndex !== undefined) {
-          // Check if it's adjacent (previous or next chunk)
-          const otherIndex = otherDoc.metadata.chunkIndex;
-          if (otherIndex === currentIndex - 1 || otherIndex === currentIndex + 1) {
-            group.push(otherDoc);
-            includedDocs.add(getDocId(otherDoc));
-          }
-        }
-      }
-    }
-    
-    // Add the group to results
-    resultGroups.push(...group);
-  }
-  
-  // Add any remaining documents that weren't grouped
-  for (const doc of documents) {
-    if (!includedDocs.has(getDocId(doc))) {
-      resultGroups.push(doc);
-      includedDocs.add(getDocId(doc));
-    }
-  }
-  
+// ... (rest of function commented out) ...
   return resultGroups;
 }
+*/
 
 // Helper to get a unique ID for a document
 function getDocId(doc: any): string {
@@ -818,6 +717,7 @@ async function generateResponse(
       messages.push(new HumanMessage(state.query));
     } else {
       // Standard response generation with retrieved content
+      // const systemPrompt = RESPONSE_SYSTEM_PROMPT; // Commented out unused variable
       const formattedPrompt = await RESPONSE_SYSTEM_PROMPT.invoke({
         context: context || 'No relevant documents were found.',
         query: state.query,
