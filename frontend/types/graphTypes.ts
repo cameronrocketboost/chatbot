@@ -28,6 +28,31 @@ export interface RetrieveDocumentsNodeUpdates {
   };
 }
 
+export interface RetrievalMetadata {
+  // Basic retrieval information
+  retrievalStrategy?: 'hybrid' | 'semantic' | 'powerpoint' | 'standard';
+  retrievalFilters?: {
+    contentType?: string;
+    source?: string;
+    sortBy?: string;
+    sortDirection?: 'asc' | 'desc';
+  };
+  // Document structure information
+  chunkIndex?: number;
+  totalChunks?: number;
+  isFirstChunk?: boolean;
+  isLastChunk?: boolean;
+  contentType?: string;
+  fileSize?: number;
+  parsedAt?: string;
+  // Ranking information
+  similarityScore?: number;
+  keywordMatchScore?: number;
+  isPartOfGroup?: boolean;
+  groupId?: string;
+  groupPosition?: number;
+}
+
 export type PDFDocument = Document & {
   metadata?: {
     loc?: {
@@ -53,8 +78,44 @@ export type PDFDocument = Document & {
     };
     uuid?: string;
     source?: string;
+    // Enhanced retrieval metadata
+    contentType?: string;
+    fileSize?: number;
+    parsedAt?: string;
+    chunkIndex?: number;
+    totalChunks?: number;
+    isFirstChunk?: boolean;
+    isLastChunk?: boolean;
+    similarityScore?: number;
+    keywordMatchScore?: number;
+    isPartOfGroup?: boolean;
+    groupId?: string;
+    groupPosition?: number;
+    retrieval?: RetrievalMetadata;
   };
 };
+
+export interface RetrySettings {
+  /**
+   * Maximum number of retry attempts
+   */
+  maxRetries: number;
+  
+  /**
+   * Initial delay in milliseconds
+   */
+  initialDelayMs: number;
+  
+  /**
+   * Maximum delay in milliseconds
+   */
+  maxDelayMs: number;
+  
+  /**
+   * Backoff factor for exponential backoff
+   */
+  backoffFactor: number;
+}
 
 export interface BaseConfiguration {
   /**
@@ -75,6 +136,12 @@ export interface BaseConfiguration {
    * @default 5
    */
   k?: number;
+  
+  /**
+   * Timeout in milliseconds
+   * @default 30000
+   */
+  timeout?: number;
 }
 
 export interface AgentConfiguration extends BaseConfiguration {
@@ -84,6 +151,29 @@ export interface AgentConfiguration extends BaseConfiguration {
    * Should be in the form: provider/model-name.
    */
   queryModel?: string;
+  
+  /**
+   * Number of messages to process in a batch
+   * @default 5
+   */
+  messageBatchSize?: number;
+  
+  /**
+   * Maximum number of concurrent operations
+   * @default 1
+   */
+  maxConcurrency?: number;
+  
+  /**
+   * Number of messages to keep in history
+   * @default 10
+   */
+  messageHistoryLength?: number;
+  
+  /**
+   * Settings for automatic retries
+   */
+  retrySettings?: RetrySettings;
 }
 
 export interface IndexConfiguration extends BaseConfiguration {
@@ -96,4 +186,16 @@ export interface IndexConfiguration extends BaseConfiguration {
    * Whether to use sample documents for indexing.
    */
   useSampleDocs?: boolean;
+  
+  /**
+   * Default size for document chunks
+   * @default 1000
+   */
+  chunkSize?: number;
+  
+  /**
+   * Overlap between adjacent chunks
+   * @default 200
+   */
+  chunkOverlap?: number;
 }

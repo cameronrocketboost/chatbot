@@ -36,7 +36,7 @@ This template is also an accompanying example to the book [Learning LangChain (O
 - **Document Ingestion Graph**: Upload and parse PDFs into `Document` objects, then store vector embeddings into a vector database (we use Supabase in this example).
 - **Retrieval Graph**: Handle user questions, decide whether to retrieve documents or give a direct answer, then generate concise responses with references to the retrieved documents.
 - **Streaming Responses**: Real-time streaming of partial responses from the server to the client UI.
-- **LangGraph Integration**: Built using LangGraph’s state machine approach to orchestrate ingestion and retrieval, visualise your agentic workflow, and debug each step of the graph.  
+- **LangGraph Integration**: Built using LangGraph's state machine approach to orchestrate ingestion and retrieval, visualise your agentic workflow, and debug each step of the graph.  
 - **Next.js Frontend**: Allows file uploads, real-time chat, and easy extension with React components and Tailwind.
 
 ---
@@ -80,7 +80,7 @@ The system consists of:
      - `SUPABASE_URL`
      - `SUPABASE_SERVICE_ROLE_KEY`
      - A table named `documents` and a function named `match_documents` for vector similarity search (see [LangChain documentation for guidance on setting up the tables](https://js.langchain.com/docs/integrations/vectorstores/supabase/)).
-4. **OpenAI API Key** (or another LLM provider’s key, supported by LangChain).
+4. **OpenAI API Key** (or another LLM provider's key, supported by LangChain).
 5. **LangChain API Key** (free and optional, but highly recommended for debugging and tracing your LangChain and LangGraph applications). Learn more [here](https://docs.smith.langchain.com/administration/how_to_guides/organization_management/create_account_api_key)
 
 ---
@@ -217,7 +217,7 @@ The backend processes the PDFs, extracts text, and stores embeddings in Supabase
 ### Asking Questions
 
 - Type your question in the chat input field.
-- Responses stream in real time. If the system retrieved documents, you’ll see a link to “View Sources” for each chunk of text used in the answer.
+- Responses stream in real time. If the system retrieved documents, you'll see a link to "View Sources" for each chunk of text used in the answer.
 
 ### Viewing Chat History
 
@@ -266,11 +266,72 @@ You can customize the agent on the backend and frontend.
    - If yarn langgraph:dev fails, confirm your Node version is >= 18 and that you have all dependencies installed.
 
 5. Network Errors
-   - Frontend must point to the correct NEXT_PUBLIC_LANGGRAPH_API_URL. By default, it is http://localhost:2024.
+   - Frontend must point to the correct NEXT_PUBLIC_LANGGRAPH_API_URL environment variable for the backend service (currently running on `http://localhost:2024` in this setup).
 
 ## Next Steps
 
 If you'd like to contribute to this project, feel free to open a pull request. Ensure it is well documented and includes tests in the test files.
 
 If you'd like to learn more about building AI chatbots and agents with LangChain and LangGraph, check out the book [Learning LangChain (O'Reilly)](https://www.oreilly.com/library/view/learning-langchain/9781098167271/).
+
+# Enhanced Document Processing Features
+
+This system includes several enhanced features for document processing:
+
+## PowerPoint Processing
+
+The system includes specialized handling for PowerPoint (.pptx) files:
+
+- **Higher Size Limits**: PowerPoint files up to 100MB can be processed (vs 50MB for other documents)
+- **Specialized Chunking**: PowerPoint content uses larger chunk sizes (1500 chars) and more overlap (300 chars) for better context preservation
+- **Progress Tracking**: Shows real-time progress with estimated completion time for large files
+- **Slide Detection**: The system attempts to identify and track individual slides for better retrieval
+
+## Progress Monitoring
+
+When processing large documents, the system provides:
+
+- Visual progress bar showing estimated completion percentage
+- Current processing stage (parsing, embedding, etc.)
+- Estimated time remaining until completion
+- Information about which file is currently being processed
+
+## Intelligent Error Handling
+
+The system includes improved error handling:
+
+- Size limit enforcement with helpful error messages
+- Duplicate document detection to prevent redundant processing
+- Graceful handling of parsing errors with per-file reporting
+- Clear status indicators for various completion states (success, skipped, error)
+
+## Conversation Storage Setup with Supabase
+
+This project now supports persistent conversation storage using Supabase. To set up the necessary database schema:
+
+1. Log in to your Supabase dashboard (the same instance used for vector storage)
+2. Navigate to the SQL Editor
+3. Create a new query and paste the SQL from `backend/src/supabase/schema.sql`
+4. Run the query to create the necessary tables and indexes
+
+The schema creates two main tables:
+- `conversations` - Stores metadata about each conversation (thread_id, title, timestamps)
+- `messages` - Stores individual messages within conversations with proper ordering
+
+Your existing Supabase credentials in `.env` will be used for conversation storage, so no additional configuration is needed.
+
+### Key Features
+
+- **Thread Persistence**: Conversations persist across page reloads via localStorage
+- **Conversation Management**: Create, retrieve, list, and delete conversations
+- **Message Storage**: All messages are stored with their metadata, including thinking states and sources
+
+### Environment Variables
+
+The application uses the following Supabase environment variables that should already be set up:
+
+```
+SUPABASE_URL=your_supabase_url
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+```
 

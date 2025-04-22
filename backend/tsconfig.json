@@ -16,10 +16,21 @@
     "allowJs": true,
     "strict": true,
     "strictFunctionTypes": false,
+    "skipLibCheck": true,
     "outDir": "dist",
     "types": ["jest", "node"],
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@langchain/langgraph-checkpoint": ["node_modules/@langchain/langgraph-checkpoint"],
+      "@langchain/langgraph-checkpoint/*": ["node_modules/@langchain/langgraph-checkpoint/*"]
+    }
   },
-  "include": ["**/*.ts", "**/*.js", "jest.setup.cjs"],
+  "include": [
+    "**/*.ts",
+    "**/*.js",
+    "jest.setup.cjs",
+    "types/**/*.d.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }
