@@ -452,3 +452,15 @@ To make document retrieval more context-aware and improve the quality of respons
     - Defined placeholder `THINKING_STAGES` constant to resolve `Cannot find name` errors.
     - Corrected final state access to use `finalThreadState.values.response` and `finalThreadState.values.documents` (with fallbacks).
 - **Remaining Issue:** Persistent TS error `Property '...' does not exist on type 'LangGraphBase'` when attempting to invoke the graph stream using `client` or `langGraphServerClient` (`.stream()`, `.streamLog()`, `.streamThreadEvents()`). Requires manual review of `@/lib/langgraph-client.ts` and `@/lib/langgraph-server.ts` to ensure correct client initialization, typing, and usage of the appropriate method for streaming thread events.
+
+## Render Deployment Build Fixes 2 (July 26)
+
+- **Goal:** Resolve new TypeScript build errors (TS6133, TS6192 - unused variables/imports) from Render logs after previous fixes.
+- **Files Affected:** `backend/src/retrieval_graph/graph.ts`, `backend/src/shared/retrieval.ts`
+- **Actions Taken:**
+    - Commented out unused `hashString` function in `graph.ts`.
+    - Commented out unused `systemPrompt` variable (in context message map) in `graph.ts`.
+    - Commented out unused imports block (`getDynamicLevenshteinThreshold`, etc.) in `retrieval.ts`.
+    - Commented out unused `ensureAgentConfiguration` import in `retrieval.ts`.
+    - Commented out unused `RecursiveCharacterTextSplitter` import in `retrieval.ts`.
+- **Remaining Issue:** Build errors should be resolved. The separate frontend issue (`Property '...' does not exist on type 'LangGraphBase'` in `frontend/api/chat/route.ts`) still requires manual investigation of client setup.

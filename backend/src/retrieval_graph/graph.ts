@@ -671,6 +671,7 @@ function getDocId(doc: any): string {
 */
 
 // Simple hash function for strings
+/* // Commented out unused function
 function hashString(str: string): number {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
@@ -680,6 +681,7 @@ function hashString(str: string): number {
   }
   return Math.abs(hash);
 }
+*/
 
 async function generateResponse(
   state: typeof AgentStateAnnotation.State,
@@ -738,7 +740,7 @@ async function generateResponse(
       console.log(`[RetrievalGraph] Adding ${recentContextMessages.length} context messages for response generation`);
       
       // Add context messages, preserving system prompt
-      const systemPrompt = messages[0];
+      // const systemPrompt = messages[0]; // Commented out unused variable
       messages.splice(1, 0, ...recentContextMessages.map(msg => {
         if (msg.type === 'human' || msg.role === 'user') {
           return new HumanMessage(msg.content);

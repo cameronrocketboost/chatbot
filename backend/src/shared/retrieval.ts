@@ -8,14 +8,14 @@ import { Document } from '@langchain/core/documents';
 //   BaseConfigurationAnnotation,
 //   ensureBaseConfiguration,
 // } from './configuration.js';
-import { 
-  getDynamicLevenshteinThreshold, 
-  levenshteinDistance,
-  calculateMatchConfidence 
-} from './utils.js';
+// import { 
+//   getDynamicLevenshteinThreshold, 
+//   levenshteinDistance,
+//   calculateMatchConfidence 
+// } from './utils.js';
 // import { loadEmbeddings } from "./utils.js"; // Commented out - unused
-import { ensureAgentConfiguration } from "../retrieval_graph/configuration.js"; // Corrected import name
-import { RecursiveCharacterTextSplitter } from "langchain/text_splitter";
+// import { ensureAgentConfiguration } from "../retrieval_graph/configuration.js"; // Commented out unused import
+// import { RecursiveCharacterTextSplitter } from "langchain/text_splitter"; // Commented out unused import
 // import { DocumentRegistryEntry, findDocumentByName, getLatestDocument } from "./registry.js"; // Commented out - unused
 // import { SupabaseRpcResult } from './types.js'; // Commented out - unused
 
