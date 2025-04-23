@@ -80,55 +80,67 @@ export async function POST(request: NextRequest) {
         }
         
         // Call LangGraph server client to stream events for the thread
-        const iterator = langGraphServerClient.streamThreadEvents(threadId, { query: message });
+        // const iterator = langGraphServerClient.streamThreadEvents(threadId, { query: message }); // OLD INCORRECT METHOD
+        
+        // TODO: Replace "YOUR_ASSISTANT_ID" with the actual ID/name of your LangGraph graph (e.g., "retrieval_graph")
+        // TODO: Verify the 'input' structure matches your graph's expected input schema.
+        const streamResponse = langGraphServerClient.runs.stream(
+          threadId,
+          "YOUR_ASSISTANT_ID", // Replace with your graph ID
+          {
+            input: { messages: [{ role: "user", content: message }] }, // Adjust input structure if needed
+            streamMode: "updates", // Or "events" - choose based on required detail
+          }
+        );
         
         let prevNode = null;
-        for await (const event of iterator) {
-          // LangGraph streamLog yields events with 'ops'
-          for (const op of event.ops) {
-            // Check operation path to see if it's a state update
-            // path often looks like '/logs/...' or '/final_state'
-            // We are interested in updates to the state, particularly messages and documents
-            // Example path for state update: "/logs/retrieveDocuments/final_state"
-            if (op.op === 'add' || op.op === 'replace') { // Look for state updates
-              // Check if the update is for messages
-              if (op.path === `/logs/${op.run_id}/streamed_output/-` || op.path.endsWith('/messages/-')) {
-                 // Send message updates (might need specific handling based on exact path/value structure)
-                 // Assuming op.value contains the message object or array
-                 sendSSE('messages/partial', op.value); 
-              }
-              // Check if the update is for documents (assuming stored under retrieveDocuments node state)
-              else if (op.path.endsWith('/retrieveDocuments/final_state/documents')) {
-                 const documents = op.value ?? [];
-                 const enhancedDocs = mapRetrievalStrategy(documents);
-                 sendSSE('updates', { retrieveDocuments: { documents: enhancedDocs } });
-              }
-              // Check for node execution updates to drive 'thinking' state
-              else if (op.path.startsWith('/logs/') && op.path.endsWith('/final_state')) {
-                 const nodeNameMatch = op.path.match(/\/logs\/([^\/]+)\/final_state/);
-                 const currentNode = nodeNameMatch ? nodeNameMatch[1] : null;
-                 
-                 if (currentNode && currentNode !== prevNode) {
-                    prevNode = currentNode;
-                    if (currentNode.includes('retrieveDocuments')) {
-                      controller.enqueue(sendThinkingUpdate({
-                        thinking: true,
-                        ...THINKING_STAGES.RETRIEVING,
-                      }));
-                    } else if (currentNode.includes('evaluateRetrievalQuality')) {
-                      controller.enqueue(sendThinkingUpdate({
-                        thinking: true,
-                        ...THINKING_STAGES.EVALUATING,
-                      }));
-                    }
-                 }
-              } 
-              // Add more checks for other state updates if needed
-            }
-          }
-        }
+        // TODO: The logic within this loop needs to be updated to handle the event structure
+        //       yielded by client.runs.stream (chunks typically have 'event' and 'data' properties).
+        //       The current logic based on event.ops and specific paths is likely incompatible.
+        //       Inspect the actual 'chunk' objects from streamResponse to adapt this logic.
+        for await (const chunk of streamResponse) { 
+          // --- START OF LOGIC TO BE REVISED ---
+          // LangGraph streamLog yields events with 'ops' // <-- This assumption might be wrong for runs.stream
+          // The following logic based on event.ops and specific paths needs review/replacement
+          if (chunk.event === 'on_chat_model_stream') { // Example: Handling LLM stream tokens
+            // Assuming chunk.data.chunk contains the message content
+            // Send message chunk...
+             sendSSE('messages/partial', chunk.data.chunk); 
+          } else if (chunk.event === 'on_tool_start' && chunk.name === 'retrieve') { // Example: Handle tool start
+             sendSSE('updates', { retrieveDocuments: { thinking: true }});
+          } else if (chunk.event === 'on_tool_end' && chunk.name === 'retrieve') { // Example: Handle tool end
+             // Assuming chunk.data.output contains documents
+             const documents = chunk.data.output ?? [];
+             const enhancedDocs = mapRetrievalStrategy(documents);
+             sendSSE('updates', { retrieveDocuments: { documents: enhancedDocs } });
+          } // Add more handlers for other relevant event types ('on_chain_start', 'on_chain_end', etc.)
+          // --- END OF LOGIC TO BE REVISED ---
+
+        //   // Original logic (likely needs removal/replacement):
+        //   for (const op of chunk.ops) { // Assuming chunk has 'ops' - VERIFY THIS
+        //     if (op.op === 'add' || op.op === 'replace') { 
+        //       if (op.path === `/logs/${op.run_id}/streamed_output/-` || op.path.endsWith('/messages/-')) {
+        //          sendSSE('messages/partial', op.value); 
+        //       }
+        //       else if (op.path.endsWith('/retrieveDocuments/final_state/documents')) {
+        //          const documents = op.value ?? [];
+        //          const enhancedDocs = mapRetrievalStrategy(documents);
+        //          sendSSE('updates', { retrieveDocuments: { documents: enhancedDocs } });
+        //       }
+        //       else if (op.path.startsWith('/logs/') && op.path.endsWith('/final_state')) {
+        //          const nodeNameMatch = op.path.match(/\\/logs\\/([^\\/]+)\\/final_state/);
+        //          const currentNode = nodeNameMatch ? nodeNameMatch[1] : null;
+        //          
+        //          if (currentNode && currentNode !== prevNode) {
+        //             prevNode = currentNode;
+        //             // ... existing thinking update logic ...
+        //          }
+        //       } 
+        //     }
+        //   }
+         }
         
-        // Fetch finalThreadState
+        // Fetch finalThreadState - This might also need adjustment depending on how state is finalized
         const finalThreadState = await langGraphServerClient.getThreadState(threadId);
         
         // Access response and documents (sources) from the .values property of the state
