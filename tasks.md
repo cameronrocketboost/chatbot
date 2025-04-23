@@ -69,16 +69,67 @@ This project is an AI-powered chatbot designed to interact with uploaded documen
 
 **Current Goal:** Implement enhanced ingestion pipeline (PPTX support, improved chunking) and add a frontend document/chunk viewer.
 
+# Deployment Troubleshooting Summary (July 2024 - Netlify/Render)
+
+**TL;DR – We chased three root causes — (1) missing environment variables during Netlify's build step, (2) TypeScript type-mismatch errors, and (3) a monorepo build-path issue.**
+_The "golden rule" we wrote on the whiteboard is: "Every value you process.env.X at build-time must exist in Netlify and your code must never access optional JSON fields without narrowing."_
+_After adding the env-vars in Netlify, creating a frontend/netlify.toml that points Netlify at the right workspace, and tightening a few TypeScript guards, the deploy finished in ≈ 95 s with 0 errors._
+
+**1. What kept breaking:**
+
+*   **Env-vars:** `Error: LANGCHAIN_API_KEY is not set` (and others like `OPENAI_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_URL`).
+    *   **Why:** Netlify executes Next.js build steps in a separate container where secrets weren't exposed by default.
+*   **Monorepo build path:** Netlify ignored the `frontend` workspace and ran the root `package.json` build.
+    *   **Why:** Without a `netlify.toml` specifying the base/command/publish for the workspace, Netlify assumes repo root.
+*   **TypeScript:** `Interface 'Message' incorrectly extends…`, `Module has no exported member…`, `property type does not exist on JSONValue`.
+    *   **Why:** Custom `Message` type extensions were incompatible with base `ai/react` types; imports were incorrect; unsafe access to optional JSON fields.
+
+**2. Fixes applied step-by-step:**
+
+*   **2.1 Add/verify environment variables:**
+    *   Added necessary variables (`LANGCHAIN_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, etc.) in Netlify UI (Build & Deploy > Environment variables).
+    *   Ensured variables available to appropriate scopes (Builds, Functions).
+    *   Used `echo` in build command (`netlify.toml`) to verify presence/length at build time.
+*   **2.2 Tell Netlify to build the frontend workspace:**
+    *   Created `netlify.toml` (initially in root, then likely corrected to be in `frontend/` or adjusted base path) with:
+        ```toml
+        [build]
+          base    = "../" # Or adjust as needed relative to netlify.toml location
+          command = "turbo run build --filter frontend"
+          publish = "frontend/.next"
+        ```
+*   **2.3 Harden TypeScript types:**
+    *   Corrected `JSONValue` import (`ai` vs `ai/react`).
+    *   Refined `Message` interface `annotations` type.
+    *   Added type guards (`isChatMessage`) before passing messages to components requiring specific roles.
+    *   Corrected prop types (`handleInputChange`).
+    *   Fixed incorrect/unused imports.
+*   **2.4 Client-side Build Safety / Runtime Quirks:**
+    *   Added `export const dynamic = 'force-dynamic';` to API routes.
+    *   **Refactored client initialization:** Moved `LangGraph`, `OpenAI`, `Supabase` client creation *inside* getter functions (`createServerClient`, `getOpenAI`, `getSupabaseService`) in helper files (`/lib/*.ts`) and called these functions *only at runtime* within API handlers, removing top-level instantiation.
+    *   Wrapped component calling `useSearchParams` (`page.tsx`) in `<Suspense>`. 
+
+**3. The golden rule (and two silver ones):**
+
+*   **GOLDEN RULE:** If you `process.env.X` in code that runs during the Next.js build, make sure X is defined in Netlify's build environment.
+*   **Silver #1:** In a monorepo, a `netlify.toml` in the correct sub-dir (or configured with correct base path) is mandatory so Netlify builds the right package.
+*   **Silver #2:** When extending third-party TypeScript types, stick to the original field contracts or wrap your extension in a new discriminated-union type.
+
 # Next Steps / To Do
 
+*   **Investigate Runtime Errors (Post-Deployment):**
+    *   [x] Verify Netlify `NEXT_PUBLIC_LANGGRAPH_API_URL` points to correct deployed Render backend URL.
+    *   [ ] Check Render backend logs for runtime errors (post-build, e.g., crashes, connection issues) - Check around 12:54 GMT for errors.
+    *   [x] Confirm correct `assistantId` used in frontend `/api/chat` route (`retrieval_graph` matches Dockerfile).
+    *   [ ] Check Render backend CORS logs (less likely).
+    *   [ ] Check Render HTTP Request logs for specific 404 details (path requested) - Error changed to 502.
+    *   [ ] **Check Netlify Function Logs:** Examine logs for `/api/chat` function around 12:54 GMT for timeouts or specific crash errors.
+    *   [ ] Review polling logic in `/api/chat/route.ts` as potential timeout cause.
+    *   [ ] Consider potential SDK/LangServe version mismatch.
+    *   [ ] Redeploy backend with cleared cache.
+
 *   **Improve Retrieval Reliability (High Priority):**
-    *   [x] **Verify Conversational Context Handling:** Re-run two-turn tests (e.g., Ask about Doc A -> Ask "summarize it") to confirm `active_document_filter` state persists and is reused correctly for contextual queries. Debug `extractQueryFilters` context logic if needed. (Verified via logs, resetRefinementCounter logic handles explicit switch)
     *   [ ] **Address `MaxListenersExceededWarning`:** Investigate and fix the root cause of this warning (likely in frontend SSE handling or backend async operations) to prevent potential leaks and ensure stability. (Pending info)
-    *   [x] **Verify/Fix `match_documents_enhanced` RPC:** Double-check the SQL function in Supabase for robustness (especially around ambiguous IDs if errors persist). Ensure it's the primary reliable path for specific document retrieval. (Logic reviewed, case-insensitive fix applied by user)
-    *   [x] **Test & Tune `CONFIDENCE_THRESHOLD`:** Conduct broader testing with various queries to ensure the 0.15 threshold in `extractQueryFilters` provides good accuracy without too many false positives/negatives. Adjust if necessary. (Reviewed logic, basic test passed, further testing optional)
-    *   [x] **Review Evaluation/Refinement Routing:** Examine `routeRetrievalResult` node logic (`graph.ts`) to ensure refinement decisions based on score/count are sensible. (Logic reviewed, seems sensible based on LLM evaluation)
-    *   [x] **Fix Context Switching during Refinement:** Modify `refineQuery` node to use the *current* query that failed evaluation as input for refinement, not the potentially stale `state.originalQuery`.
-    *   [ ] **Fix "Latest Document" Filter Handling:** Modify `extractQueryFilters` to clear the active filter state when `__LATEST__` is detected, preventing the previous document's filter from persisting incorrectly.
 
 *   **Consolidate/Optimize Retrieval Logic (Medium Priority):**
     *   [ ] **Simplify `retrieval.ts`:** Remove redundant registry lookups within the retriever if `extractQueryFilters` now reliably provides validated filters.
@@ -227,9 +278,11 @@ This project is an AI-powered chatbot designed to interact with uploaded documen
         *   [x] Created `frontend/lib/supabase-server.ts` with server-side client initialization.
         *   [x] Verified API routes already had the correct import statement.
     *   [ ] **Fix Backend Deployment (Render):**
+        *   [ ] **Fix DB Migration #5:** Run SQL (`DROP TABLE checkpoints` or `ALTER TABLE checkpoints ALTER COLUMN thread_id TYPE uuid ...`) on Supabase DB.
         *   [ ] **Set `DATABASE_URI`:** Use the **Supabase Connection Pooler URI** (IPv4) in Render Environment Variables.
         *   [ ] **Verify Start Command uses `$PORT`:** Check `backend/package.json` `start` script.
         *   [ ] **Set Render Start Command** (in Render UI): `yarn install && yarn build && yarn start`.
+        *   [ ] Redeploy backend with cleared cache and monitor logs.
     *   [ ] Debug connection issues between frontend and backend:
         *   [ ] Test thread creation from frontend to backend
         *   [ ] Monitor network requests in browser DevTools for connection errors
@@ -451,46 +504,15 @@ To make document retrieval more context-aware and improve the quality of respons
    * [x] Implement re-ranking of retrieved chunks based on relevance
    * [x] Create "chunk groups" that retrieve related chunks together
    * [x] Add query-based filtering options to narrow retrieval scope (Implemented LLM + Regex fallback for filename filters in `
-*   [ ] **Fix Frontend Deployment:** Add `packageManager` field to root `package.json` for Netlify/Yarn Workspaces.
-
-## Frontend API Route (`/api/chat`) Fixes (July 26)
-
-- **Goal:** Resolve TypeScript build errors reported by linter.
-- **File Affected:** `frontend/api/chat/route.ts`
-- **Actions Taken:**
-    - Defined placeholder `THINKING_STAGES` constant to resolve `Cannot find name` errors.
-    - Corrected final state access to use `finalThreadState.values.response` and `finalThreadState.values.documents` (with fallbacks).
-- **Remaining Issue:** Persistent TS error `Property '...' does not exist on type 'LangGraphBase'` when attempting to invoke the graph stream using `client` or `langGraphServerClient` (`.stream()`, `.streamLog()`, `.streamThreadEvents()`). Requires manual review of `@/lib/langgraph-client.ts` and `@/lib/langgraph-server.ts` to ensure correct client initialization, typing, and usage of the appropriate method for streaming thread events.
-
-## Render Deployment Build Fixes 2 (July 26)
-
-- **Goal:** Resolve new TypeScript build errors (TS6133, TS6192 - unused variables/imports) from Render logs after previous fixes.
-- **Files Affected:** `backend/src/retrieval_graph/graph.ts`, `backend/src/shared/retrieval.ts`
-- **Actions Taken:**
-    - Commented out unused `hashString` function in `graph.ts`.
-    - Commented out unused `systemPrompt` variable (in context message map) in `graph.ts`.
-    - Commented out unused imports block (`getDynamicLevenshteinThreshold`, etc.) in `retrieval.ts`.
-    - Commented out unused `ensureAgentConfiguration` import in `retrieval.ts`.
-    - Commented out unused `RecursiveCharacterTextSplitter` import in `retrieval.ts`.
-- **Remaining Issue:** Build errors should be resolved. The separate frontend issue (`Property '...' does not exist on type 'LangGraphBase'` in `frontend/api/chat/route.ts`) still requires manual investigation of client setup.
-
-## Render Deployment Start Command Fix (July 26)
-
-- **Goal:** Fix deployment failure caused by incorrect Start Command.
-- **Issue:** Render logs show `error Command "langgraph:start" not found.`
-- **Action Required:** Update the **Start Command** in Render service settings for the backend. Change it from `yarn langgraph:start` to the correct script defined in `backend/package.json` (e.g., `yarn start` or `yarn serve`).
-
-*   [ ] Add specific dependencies (`express`, `cors`, `@types/express`, `@types/cors`) to `backend/package.json`.
-*   [ ] Ensure `backend/.env` contains `PORT` and secure `ALLOWED_ORIGINS`.
-*   [ ] Add all variables from `backend/.env` to Render environment variables.
-*   [ ] Ensure `backend/package.json` has correct `build` and `start` scripts.
-*   [ ] Set Render Start Command to `yarn install && yarn build && yarn start`.
 *   [ ] **Fix Frontend Deployment (Netlify):**
-    *   [ ] Verify environment variable usage (client-side vs. server-side) and prefix with `NEXT_PUBLIC_` if needed.
-    *   [ ] Check environment variable scope in Netlify UI (Builds, Functions).
+    *   [x] Verify environment variable usage (client-side vs. server-side) and prefix with `NEXT_PUBLIC_` if needed.
+    *   [x] Check environment variable scope in Netlify UI (Builds, Functions).
     *   [ ] Set explicit Node.js version using `.nvmrc` file or `NODE_VERSION` environment variable in Netlify.
-    *   [ ] Add `packageManager` field to root `package.json` for Yarn workspaces compatibility.
-    *   [ ] Add `export const dynamic = 'force-dynamic'` to API routes (`chat`, `ingest`, `documents`).
+    *   [x] Add `packageManager` field to root `package.json` for Yarn workspaces compatibility.
+    *   [x] Add `export const dynamic = 'force-dynamic'` to API routes (`chat`, `ingest`, `documents`, `ingest/status`).
+    *   [x] Refactored client initialization (`langgraph-server.ts`, `openai-client.ts`, `supabase-server.ts`) to be runtime-only.
+    *   [x] Added echo command to `netlify.toml` for env var check.
+    *   [x] Wrapped `useSearchParams` usage in `page.tsx` with `<Suspense>`.
     *   [ ] Redeploy frontend and monitor build logs.
 *   [ ] **Fix Backend Deployment (Render):**
     *   [ ] **Set `DATABASE_URI`:** Use the **Supabase Connection Pooler URI** (IPv4) in Render Environment Variables.
