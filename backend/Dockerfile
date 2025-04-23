@@ -39,7 +39,6 @@ COPY --from=deps /app/yarn.lock* ./
 COPY --from=deps /app/backend ./backend
 
 # Install ALL dependencies (including devDependencies) needed for building
-# Ensure the context is correct for yarn install within the builder stage
 RUN yarn install --frozen-lockfile
 
 # Copy the rest of the backend source code
@@ -47,7 +46,6 @@ COPY backend/src ./backend/src
 COPY backend/tsconfig.json ./backend/
 
 # Build the TypeScript code
-# Assuming your backend's build script is named 'build' in backend/package.json
 RUN yarn workspace backend build
 
 # 4. Final Production Stage
