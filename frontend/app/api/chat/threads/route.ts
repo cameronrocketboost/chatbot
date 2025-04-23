@@ -1,6 +1,11 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { langGraphServerClient } from '@/lib/langgraph-server';
 
+export const dynamic = 'force-dynamic'; // Prevent prerendering at build time
+
+/**
+ * Creates a new LangGraph thread (conversation)
+ */
 export async function POST() {
   console.log("[/api/chat/threads] Received POST request to create thread.");
   try {
