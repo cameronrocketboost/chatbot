@@ -1,0 +1,20 @@
+# netlify.toml
+########################################
+#  Build settings
+########################################
+[build]
+  # Tell Netlify to run the build from the repo root
+  base    = ""                               # root of repo
+  command = "turbo run build --filter frontend"
+  publish = "frontend/.next"
+
+# Next.js runtime plugin (same as the UI)
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+########################################
+#  Dummy vars that exist ONLY at build-time
+########################################
+[build.environment]
+  # Any non-empty placeholder prevents “key not set” crashes
+  LANGCHAIN_API_KEY = "placeholder"
