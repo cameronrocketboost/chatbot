@@ -235,6 +235,7 @@ export default function Home() {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         
+        // eslint-disable-next-line no-constant-condition
         while (true) {
             const { value, done } = await reader.read();
             if (done) break;
