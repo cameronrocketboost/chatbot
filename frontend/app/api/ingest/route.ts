@@ -2,6 +2,11 @@
 // app/api/ingest/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { Buffer } from 'buffer'; // Need Buffer again
+import { langGraphServerClient } from '@/lib/langgraph-server';
+import { PDFDocument } from '@/types/graphTypes';
+import { type Message as AIMessage } from 'ai';
+
+export const dynamic = 'force-dynamic'; // Prevent build-time execution
 
 // --- Remove unused imports ---
 // import { Document } from "@langchain/core/documents"; // No longer creating docs here
@@ -12,7 +17,6 @@ import { Buffer } from 'buffer'; // Need Buffer again
 
 // --- Keep necessary imports ---
 import { indexConfig } from '@/constants/graphConfigs'; // Still needed for backend call
-import { langGraphServerClient } from '@/lib/langgraph-server'; // Still needed for backend call
 
 // --- Constants --- 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; 

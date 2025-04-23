@@ -1,5 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
+// import { supabaseAdmin } from '@/lib/supabase-admin'; // Removed potentially incorrect import
 
 // Ensure environment variables are loaded (adjust path if necessary)
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -9,6 +11,8 @@ if (!supabaseUrl || !supabaseServiceRoleKey) {
   console.error('Error: Missing Supabase URL or Service Role Key in environment variables.');
   // Avoid throwing at module scope, handle in POST
 }
+
+export const dynamic = 'force-dynamic'; // Prevent build-time execution
 
 export async function POST(request: Request) {
   console.log('[API /documents/delete] Request received.');
