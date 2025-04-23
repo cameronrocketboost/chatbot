@@ -118,8 +118,7 @@ _After adding the env-vars in Netlify, creating a frontend/netlify.toml that poi
 # Next Steps / To Do
 
 *   **Implement SSE Proxy via Render Backend (Option B):** (Resolves Netlify 502 Timeout)
-    *   [x] Add `/chat/stream` endpoint to `backend/src/server.ts` using LangGraph SDK with `streamMode: "updates"` for SSE.
-    *   [x] Update `useChat` hook's `api` prop in `frontend/app/page.tsx` to point directly to Render backend URL (`https://chatbot-zzeo.onrender.com/chat/stream`).
+    *   [x] Use data-stream v1 protocol: set `x-vercel-ai-data-stream: v1` header and send numeric code frames (`0:` for tokens, `1:` for final message).
     *   [x] Confirm deletion of unused Netlify Function `frontend/app/api/chat/route.ts`.
     *   [x] Update SSE frame format: initial thinking event, heartbeat, proper data frames, done event.
     *   [ ] Deploy updated backend code to Render service (ensure env vars are set).

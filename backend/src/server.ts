@@ -7,7 +7,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { Client as LangGraphClient } from '@langchain/langgraph-sdk'; // Renamed to avoid conflict
-// import { v4 as uuidv4 } from 'uuid'; // REMOVED - Unused import
+import { v4 as uuidv4 } from 'uuid'; // Import for data-stream v1 final message ID
 import { createClient, SupabaseClient } from '@supabase/supabase-js'; // Import Supabase
 import { AIMessage, HumanMessage, BaseMessage } from '@langchain/core/messages'; // Import message types
 
@@ -258,18 +258,13 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
     await addMessageToConversation(currentThreadId, { role: 'user', content: userMessageContent });
 
     // --- Set SSE Headers --- 
+    res.setHeader('x-vercel-ai-data-stream', 'v1');
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders(); // Send headers immediately
 
-    // Immediately signal thinking state
-    res.write('event: thinking\ndata: {"msg":"thinking"}\n\n');
-    // Heartbeat to keep connection alive every 8 seconds
-    const HEARTBEAT_MS = 8000;
-    const heartbeat = setInterval(() => res.write(':\n\n'), HEARTBEAT_MS);
-
-    console.log(`[POST /chat/stream] Starting stream for thread ${currentThreadId}...`);
+    console.log(`[POST /chat/stream] Starting data-stream v1 for thread ${currentThreadId}...`);
 
     // --- Prepare Graph Input --- 
     const history = await getMessageHistory(currentThreadId); 
@@ -286,20 +281,26 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
     let accumulatedContent = "";
 
     for await (const chunk of streamResponse) {
-       const streamChunk: any = chunk;
-       if (streamChunk.event === 'on_llm_stream' && typeof streamChunk.data?.chunk === 'string') {
-         const token = streamChunk.data.chunk;
-         accumulatedContent += token;
-         // Send token as SSE data frame
-         res.write(`data: ${JSON.stringify(token)}\n\n`);
-       }
+      const streamChunk: any = chunk;
+      if (streamChunk.event === 'on_llm_stream' && typeof streamChunk.data?.chunk === 'string') {
+        const token = streamChunk.data.chunk;
+        accumulatedContent += token;
+        // Send partial token with v1 protocol
+        res.write(`0:${JSON.stringify(token)}\n`);
+      }
     }
     
     console.log(`[POST /chat/stream] Stream finished for thread ${currentThreadId}.`);
 
-    // Signal end of stream and clear heartbeat
-    res.write('event: done\ndata: {}\n\n');
-    clearInterval(heartbeat);
+    // Send final structured assistant message
+    const finalState: any = await langGraphClient.threads.getState(currentThreadId);
+    const sources = finalState?.values?.documents ?? [];
+    res.write(`1:${JSON.stringify({
+      id: uuidv4(),
+      role: 'assistant',
+      content: accumulatedContent,
+      metadata: { sources }
+    })}\n`);
     res.end();
 
   } catch (error: any) {
