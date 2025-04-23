@@ -117,17 +117,30 @@ _After adding the env-vars in Netlify, creating a frontend/netlify.toml that poi
 
 # Next Steps / To Do
 
-*   **Investigate Runtime Errors (Post-Deployment):**
-    *   [x] Verify Netlify `NEXT_PUBLIC_LANGGRAPH_API_URL` points to correct deployed Render backend URL.
-    *   [ ] Check Render backend logs for runtime errors (post-build, e.g., crashes, connection issues) - Check around 12:54 / 16:51 GMT for errors.
-    *   [x] Confirm correct `assistantId` used in frontend `/api/chat` route (`retrieval_graph` matches Dockerfile).
-    *   [ ] Check Render backend CORS logs (less likely).
-    *   [ ] Check Render HTTP Request logs for specific 404/502 details.
-    *   [ ] **Check Netlify Function Logs:** Examine logs for `/api/chat` function around **16:51 GMT** (Request ID `01JSHRYKPFKA7VR06BBBX1KAFK`) for **timeouts** or crash errors (with `streamMode: "values"`).
-    *   [ ] ~~Review polling logic in `/api/chat/route.ts` as potential timeout cause.~~ (Polling removed)
-    *   [ ] Review `streamMode: "values"` logic - Does backend consistently finish within timeout?
-    *   [ ] Consider potential SDK/LangServe version mismatch.
-    *   [ ] Redeploy backend with cleared cache.
+*   **Implement SSE Proxy via Render Backend (Option B):** (Resolves Netlify 502 Timeout)
+    *   [x] Add `/chat/stream` endpoint to `backend/src/server.ts` using LangGraph SDK with `streamMode: "updates"` for SSE.
+    *   [x] Update `useChat` hook's `api` prop in `frontend/app/page.tsx` to point directly to Render backend URL (`https://chatbot-zzeo.onrender.com/chat/stream`).
+    *   [x] Confirm deletion of unused Netlify Function `frontend/app/api/chat/route.ts`.
+    *   [ ] Deploy updated backend code to Render service (ensure env vars are set).
+    *   [ ] Deploy updated frontend code to Netlify.
+    *   [ ] Test deployed chat functionality:
+        *   [ ] Verify token-by-token streaming.
+        *   [ ] Check for frontend/backend console errors.
+        *   [ ] Confirm conversation history/threads (`threadId`) functionality.
+    *   [ ] (Optional) Refinements:
+        *   [ ] Review/restrict backend CORS settings (`ALLOWED_ORIGINS`).
+        *   [ ] Add context message passing logic to backend `/chat/stream` if needed.
+        *   [ ] Add logic to save complete conversation message to Supabase after stream finishes.
+*   **Investigate Runtime Errors (Post-Deployment):** (Potentially resolved by Option B)
+    *   [x] Verify Netlify `NEXT_PUBLIC_LANGGRAPH_API_URL` points to correct deployed Render backend URL. (URL now used by backend, not frontend API)
+    *   [ ] Check Render backend logs for runtime errors (post-build, e.g., crashes, connection issues).
+    *   [x] Confirm correct `assistantId` used (`retrieval_graph` used in new backend endpoint).
+    *   [ ] Check Render backend CORS logs (Current setting is `*`, check if needs tightening).
+    *   [ ] ~~Check Render HTTP Request logs for specific 404/502 details.~~ (Error likely moves to backend logs)
+    *   [ ] ~~Check Netlify Function Logs~~ (Frontend API route bypassed)
+    *   [ ] ~~Review `streamMode: "values"` logic~~ (Backend now uses `updates`)
+    *   [ ] Consider potential SDK/LangServe version mismatch (Still possible).
+    *   [ ] Redeploy backend with cleared cache (Needed after code changes).
 
 *   **Improve Retrieval Reliability (High Priority):**
     *   [ ] **Address `MaxListenersExceededWarning`:** Investigate and fix the root cause of this warning (likely in frontend SSE handling or backend async operations) to prevent potential leaks and ensure stability. (Pending info)
@@ -524,3 +537,85 @@ To make document retrieval more context-aware and improve the quality of respons
     *   [ ] Rotate secrets.
     *   [ ] Move server-only keys (e.g., `SUPABASE_SERVICE_ROLE_KEY`) out of client bundle (use dedicated API endpoint).
     *   [x] Pin Node version (e.g., 22) in `backend/package.json` `engines` field.
+
+### Completed Tasks
+
+- [x] Verified frontend (`frontend/app/page.tsx`) uses the correct backend URL (`https://chatbot-zzeo.onrender.com/chat/stream`).
+- [x] Confirmed old frontend API route (`frontend/app/api/chat/route.ts`) is removed.
+
+# Tasks In Progress
+
+- [ ] Implement SSE Proxy via Render Backend (Option B).
+- [ ] Investigate Runtime Errors (Post-Deployment).
+- [ ] Improve Retrieval Reliability (High Priority).
+- [ ] Consolidate/Optimize Retrieval Logic (Medium Priority).
+- [ ] Code Cleanup & Testing (Medium Priority).
+- [ ] UI/UX Overhaul (Phase 1).
+- [ ] Testing & Validation.
+- [ ] PowerPoint Enhancement.
+- [ ] Document Management Enhancements.
+- [ ] Backend Graph Issues.
+- [ ] State Management Enhancement.
+- [ ] Session & Thread Management.
+- [ ] Refinement (Optional).
+- [ ] Advanced Context Management (New).
+- [ ] Backend-Frontend Connection Issues.
+
+# Tasks To Do
+
+- [ ] Implement SSE Proxy via Render Backend (Option B).
+- [ ] Investigate Runtime Errors (Post-Deployment).
+- [ ] Improve Retrieval Reliability (High Priority).
+- [ ] Consolidate/Optimize Retrieval Logic (Medium Priority).
+- [ ] Code Cleanup & Testing (Medium Priority).
+- [ ] UI/UX Overhaul (Phase 1).
+- [ ] Testing & Validation.
+- [ ] PowerPoint Enhancement.
+- [ ] Document Management Enhancements.
+- [ ] Backend Graph Issues.
+- [ ] State Management Enhancement.
+- [ ] Session & Thread Management.
+- [ ] Refinement (Optional).
+- [ ] Advanced Context Management (New).
+- [ ] Backend-Frontend Connection Issues.
+
+# Tasks Completed
+
+- [x] Verified frontend (`frontend/app/page.tsx`) uses the correct backend URL (`https://chatbot-zzeo.onrender.com/chat/stream`).
+- [x] Confirmed old frontend API route (`frontend/app/api/chat/route.ts`) is removed.
+
+# Tasks In Progress
+
+- [ ] Implement SSE Proxy via Render Backend (Option B).
+- [ ] Investigate Runtime Errors (Post-Deployment).
+- [ ] Improve Retrieval Reliability (High Priority).
+- [ ] Consolidate/Optimize Retrieval Logic (Medium Priority).
+- [ ] Code Cleanup & Testing (Medium Priority).
+- [ ] UI/UX Overhaul (Phase 1).
+- [ ] Testing & Validation.
+- [ ] PowerPoint Enhancement.
+- [ ] Document Management Enhancements.
+- [ ] Backend Graph Issues.
+- [ ] State Management Enhancement.
+- [ ] Session & Thread Management.
+- [ ] Refinement (Optional).
+- [ ] Advanced Context Management (New).
+- [ ] Backend-Frontend Connection Issues.
+
+# Tasks To Do
+
+- [ ] Implement SSE Proxy via Render Backend (Option B).
+- [ ] Investigate Runtime Errors (Post-Deployment).
+- [ ] Improve Retrieval Reliability (High Priority).
+- [ ] Consolidate/Optimize Retrieval Logic (Medium Priority).
+- [ ] Code Cleanup & Testing (Medium Priority).
+- [ ] UI/UX Overhaul (Phase 1).
+- [ ] Testing & Validation.
+- [ ] PowerPoint Enhancement.
+- [ ] Document Management Enhancements.
+- [ ] Backend Graph Issues.
+- [ ] State Management Enhancement.
+- [ ] Session & Thread Management.
+- [ ] Refinement (Optional).
+- [ ] Advanced Context Management (New).
+- [ ] Backend-Frontend Connection Issues.
