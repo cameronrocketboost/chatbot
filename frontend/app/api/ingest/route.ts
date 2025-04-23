@@ -6,7 +6,7 @@ import { langGraphServerClient } from '@/lib/langgraph-server';
 import { PDFDocument } from '@/types/graphTypes';
 import { type Message as AIMessage } from 'ai';
 
-export const dynamic = 'force-dynamic'; // Prevent build-time execution
+export const dynamic = 'force-dynamic'; // Prevent pre-rendering at build time
 
 // --- Remove unused imports ---
 // import { Document } from "@langchain/core/documents"; // No longer creating docs here

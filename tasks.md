@@ -226,10 +226,10 @@ This project is an AI-powered chatbot designed to interact with uploaded documen
         *   [x] Confirmed `supabase-server.ts` did not exist in `frontend/lib`.
         *   [x] Created `frontend/lib/supabase-server.ts` with server-side client initialization.
         *   [x] Verified API routes already had the correct import statement.
-    *   [ ] **Fix Backend DATABASE_URI Deployment Error (Render):**
-        *   [ ] Add `DATABASE_URI` environment variable to Render backend service.
-        *   [ ] Set value to the correct Postgres connection string.
-        *   [ ] Redeploy backend and verify startup logs.
+    *   [ ] **Fix Backend Deployment (Render):**
+        *   [ ] **Set `DATABASE_URI`:** Use the **Supabase Connection Pooler URI** (IPv4) in Render Environment Variables.
+        *   [ ] **Verify Start Command uses `$PORT`:** Check `backend/package.json` `start` script.
+        *   [ ] **Set Render Start Command** (in Render UI): `yarn install && yarn build && yarn start`.
     *   [ ] Debug connection issues between frontend and backend:
         *   [ ] Test thread creation from frontend to backend
         *   [ ] Monitor network requests in browser DevTools for connection errors
@@ -485,3 +485,19 @@ To make document retrieval more context-aware and improve the quality of respons
 *   [ ] Add all variables from `backend/.env` to Render environment variables.
 *   [ ] Ensure `backend/package.json` has correct `build` and `start` scripts.
 *   [ ] Set Render Start Command to `yarn install && yarn build && yarn start`.
+*   [ ] **Fix Frontend Deployment (Netlify):**
+    *   [ ] Verify environment variable usage (client-side vs. server-side) and prefix with `NEXT_PUBLIC_` if needed.
+    *   [ ] Check environment variable scope in Netlify UI (Builds, Functions).
+    *   [ ] Set explicit Node.js version using `.nvmrc` file or `NODE_VERSION` environment variable in Netlify.
+    *   [ ] Add `packageManager` field to root `package.json` for Yarn workspaces compatibility.
+    *   [ ] Add `export const dynamic = 'force-dynamic'` to API routes (`chat`, `ingest`, `documents`).
+    *   [ ] Redeploy frontend and monitor build logs.
+*   [ ] **Fix Backend Deployment (Render):**
+    *   [ ] **Set `DATABASE_URI`:** Use the **Supabase Connection Pooler URI** (IPv4) in Render Environment Variables.
+    *   [ ] **Verify Start Command uses `$PORT`:** Check `backend/package.json` `start` script.
+    *   [ ] **Set Render Start Command** (in Render UI): `yarn install && yarn build && yarn start`.
+    *   [ ] Redeploy backend with cleared cache and monitor logs.
+*   [ ] **Post-Deployment Actions:**
+    *   [ ] Rotate secrets.
+    *   [ ] Move server-only keys (e.g., `SUPABASE_SERVICE_ROLE_KEY`) out of client bundle (use dedicated API endpoint).
+    *   [x] Pin Node version (e.g., 22) in `backend/package.json` `engines` field.

@@ -23,7 +23,7 @@ interface SupabaseDocumentChunk {
   metadata: { [key: string]: any }; // Includes source, type, etc.
 }
 
-export const dynamic = 'force-dynamic'; // Prevent build-time execution
+export const dynamic = 'force-dynamic'; // Prevent pre-rendering at build time
 
 export async function GET(request: NextRequest) {
   console.log("GET /api/documents called");

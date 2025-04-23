@@ -9,6 +9,8 @@ import { getConversationByThreadId, addMessageToConversation } from '@/lib/supab
 // Remove Edge runtime - invoke might not be fully compatible or efficient
 // export const runtime = 'edge';
 
+export const dynamic = 'force-dynamic'; // Prevent pre-rendering at build time
+
 interface ChatRequestBody {
   messages: Message[];
   data?: {
