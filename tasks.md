@@ -226,6 +226,10 @@ This project is an AI-powered chatbot designed to interact with uploaded documen
         *   [x] Confirmed `supabase-server.ts` did not exist in `frontend/lib`.
         *   [x] Created `frontend/lib/supabase-server.ts` with server-side client initialization.
         *   [x] Verified API routes already had the correct import statement.
+    *   [ ] **Fix Backend DATABASE_URI Deployment Error (Render):**
+        *   [ ] Add `DATABASE_URI` environment variable to Render backend service.
+        *   [ ] Set value to the correct Postgres connection string.
+        *   [ ] Redeploy backend and verify startup logs.
     *   [ ] Debug connection issues between frontend and backend:
         *   [ ] Test thread creation from frontend to backend
         *   [ ] Monitor network requests in browser DevTools for connection errors
