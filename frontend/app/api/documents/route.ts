@@ -2,8 +2,8 @@ import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 
 // IMPORTANT: Ideally, these should come from frontend environment variables (
-// e.g., process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
-// Using backend env vars directly here for simplicity, but consider security implications.
+// process.env.NEXT_PUBLIC_SUPABASE_URL and process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
+// Using backend keys here for simplicity, but less secure if exposed client-side.
 const supabaseUrl = process.env.SUPABASE_URL || 'https://uqefoagmfyoczyykbcyy.supabase.co';
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVxZWZvYWdtZnlvY3p5eWtiY3l5Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0Mzg2NTk4OSwiZXhwIjoyMDU5NDQxOTg5fQ._HCf0IN15JLy-exi3nGIuyLCsRZSXNvZfdtaZRpo_xU';
 
@@ -22,6 +22,8 @@ interface SupabaseDocumentChunk {
   embedding: number[]; // Or string, depending on how pg_vector stores it
   metadata: { [key: string]: any }; // Includes source, type, etc.
 }
+
+export const dynamic = 'force-dynamic'; // Prevent build-time execution
 
 export async function GET(request: NextRequest) {
   console.log("GET /api/documents called");

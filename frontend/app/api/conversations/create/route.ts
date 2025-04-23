@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createConversation } from '@/lib/supabase-conversations';
+import { createConversation, getConversationWithMessages } from '@/lib/supabase-conversations';
 import { langGraphServerClient } from '@/lib/langgraph-server';
+
+export const dynamic = 'force-dynamic'; // Prevent build-time execution
 
 export async function POST(request: NextRequest) {
   try {

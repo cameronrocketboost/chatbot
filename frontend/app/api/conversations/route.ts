@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getConversations, getConversationByThreadId } from '@/lib/supabase-conversations';
+import { getSupabaseServerClient } from '@/lib/supabase-server';
+
+export const dynamic = 'force-dynamic'; // Prevent build-time execution
 
 export async function GET(request: NextRequest) {
   try {
