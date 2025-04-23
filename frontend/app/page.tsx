@@ -222,6 +222,7 @@ function ChatInterface() {
       threadId: threadId
     },
     onResponse: (response) => {
+      // No action needed on response start for now
     },
     onFinish: (message) => {
       console.log("Chat finished, final message:", message);
