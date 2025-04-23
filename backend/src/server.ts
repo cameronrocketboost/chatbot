@@ -248,27 +248,26 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
   let currentThreadId = currentThreadIdFromRequest; // Use the threadId passed from the frontend
 
   try {
-    // --- Ensure Thread Exists & Save User Message --- 
+    // Require a valid threadId
     if (!currentThreadId) {
-      // If frontend didn't provide a threadId (e.g., first message), create one.
-      console.log("[POST /chat/stream] No threadId in request body, creating new thread...");
-      const newThread = await langGraphClient.threads.create();
-      currentThreadId = newThread.thread_id;
-      console.log(`[POST /chat/stream] Created new thread: ${currentThreadId}`);
-      // Send the new threadId back to the client immediately if possible (before SSE headers)
-      res.write(`event: thread_id\ndata: ${JSON.stringify({ threadId: currentThreadId })}\n\n`);
-      // Save the user message now that we have the threadId
-      await addMessageToConversation(currentThreadId, { role: 'user', content: userMessageContent });
-    } else {
-        // Save user message for existing thread
-        await addMessageToConversation(currentThreadId, { role: 'user', content: userMessageContent });
+      console.warn("[POST /chat/stream] threadId missing in request body.");
+      res.status(400).json({ error: 'threadId is required in request body' });
+      return;
     }
+    // Save the user message for this thread
+    await addMessageToConversation(currentThreadId, { role: 'user', content: userMessageContent });
 
     // --- Set SSE Headers --- 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders(); // Send headers immediately
+
+    // Immediately signal thinking state
+    res.write('event: thinking\ndata: {"msg":"thinking"}\n\n');
+    // Heartbeat to keep connection alive every 8 seconds
+    const HEARTBEAT_MS = 8000;
+    const heartbeat = setInterval(() => res.write(':\n\n'), HEARTBEAT_MS);
 
     console.log(`[POST /chat/stream] Starting stream for thread ${currentThreadId}...`);
 
@@ -287,40 +286,21 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
     let accumulatedContent = "";
 
     for await (const chunk of streamResponse) {
-       const streamChunk: any = chunk; 
-       if (streamChunk.event === 'on_llm_stream' && streamChunk.data?.chunk) {
-          const token = streamChunk.data.chunk;
-          if (typeof token === 'string') {
-              accumulatedContent += token;
-              const escapedToken = JSON.stringify(token).slice(1, -1);
-              const messageChunk = `0:"${escapedToken}"\n`; 
-              res.write(messageChunk); 
-          }
+       const streamChunk: any = chunk;
+       if (streamChunk.event === 'on_llm_stream' && typeof streamChunk.data?.chunk === 'string') {
+         const token = streamChunk.data.chunk;
+         accumulatedContent += token;
+         // Send token as SSE data frame
+         res.write(`data: ${JSON.stringify(token)}\n\n`);
        }
     }
     
     console.log(`[POST /chat/stream] Stream finished for thread ${currentThreadId}.`);
 
-    // --- Save Assistant Response --- 
-    if (accumulatedContent) {
-        console.log(`[POST /chat/stream] Fetching final state for thread ${currentThreadId}...`);
-        const finalState: any = await langGraphClient.threads.getState(currentThreadId);
-        const lastMessageContent = finalState?.values?.messages?.slice(-1)?.[0]?.content ?? accumulatedContent;
-        const finalMetadata = { sources: finalState?.values?.documents ?? [] }; 
-        
-        console.log(`[POST /chat/stream] Saving final assistant message to DB (Length: ${lastMessageContent.length})`);
-        if (lastMessageContent) { 
-          await addMessageToConversation(currentThreadId, { 
-              role: 'assistant', 
-              content: lastMessageContent, 
-              metadata: finalMetadata 
-          });
-        } else {
-            console.warn(`[POST /chat/stream] No final assistant message content found...`);
-        }
-    }
-
-    res.end(); 
+    // Signal end of stream and clear heartbeat
+    res.write('event: done\ndata: {}\n\n');
+    clearInterval(heartbeat);
+    res.end();
 
   } catch (error: any) {
      // --- Error Handling --- 
