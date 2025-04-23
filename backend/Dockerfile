@@ -18,7 +18,7 @@ RUN corepack enable
 # 2. Dependencies layer #
 #########################
 FROM base AS deps
-COPY package.json yarn.lock ./
+COPY package.json yarn.lock* ./
 COPY backend/package.json ./backend/
 
 #  --production installs only prod deps (good for final layer)
@@ -32,7 +32,7 @@ FROM base AS builder
 # 👇 Override NODE_ENV so that dev-deps (typescript, eslint …) are installed
 ENV NODE_ENV=development
 
-COPY package.json yarn.lock ./
+COPY package.json yarn.lock* ./
 COPY backend/package.json ./backend/
 RUN yarn install --frozen-lockfile --production=false
 
@@ -57,5 +57,5 @@ COPY --from=deps    /app/package.json     ./package.json
 COPY --from=deps    /app/backend/package.json  ./backend/package.json
 
 # Render injects $PORT at runtime; your server should `listen(process.env.PORT)`
-EXPOSE 8000
+# EXPOSE 8000 # EXPOSE is informational, Render handles port mapping automatically based on $PORT
 CMD ["node", "backend/dist/server.js"]
