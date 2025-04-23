@@ -123,12 +123,6 @@ export async function POST(req: NextRequest) {
       const stream = new ReadableStream({
         async start(controller) {
           try {
-            // Send initial thinking state
-            const initialData = { thinking: true, ...THINKING_STAGES.INITIAL };
-            console.log('[SSE] Sending Initial Data:', JSON.stringify(initialData));
-            controller.enqueue(sendThinkingUpdate(initialData));
-            await new Promise(resolve => setTimeout(resolve, 1));
-
             const assistantId = process.env.LANGGRAPH_RETRIEVAL_ASSISTANT_ID;
             if (!assistantId) throw new Error('LANGGRAPH_RETRIEVAL_ASSISTANT_ID is not set');
 
