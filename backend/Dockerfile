@@ -1,6 +1,6 @@
 # 1. Base Image
 # Use an official Node.js runtime as a parent image (choose a version suitable for your project)
-FROM node:20-slim AS base
+FROM node:22-slim AS base
 
 # Set environment variables 
 # Let Node.js know we're in production
