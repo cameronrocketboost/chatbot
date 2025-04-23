@@ -83,6 +83,10 @@ export async function POST(req: NextRequest) {
   let threadId: string | undefined;
   let isNewThread = false; // Track if we created a new thread
   
+  // Get the client instance at runtime (outside specific handlers for now,
+  // assuming it's okay to create it once per request)
+  const serverClient = createServerClient(); 
+  
   // Check if the request is for Server-Sent Events
   const isSSE = req.headers.get('accept') === 'text/event-stream';
   
@@ -133,7 +137,8 @@ export async function POST(req: NextRequest) {
               throw new Error('LANGGRAPH_RETRIEVAL_ASSISTANT_ID is not set');
             }
             
-            const serverClient = createServerClient();
+            // Use the runtime client instance (already created above)
+            // const serverClient = createServerClient(); // No need to recreate
             
             // Create a new thread if needed
             if (isNewThread) {
@@ -146,7 +151,8 @@ export async function POST(req: NextRequest) {
               controller.enqueue(sendThinkingUpdate(threadCreateData));
               await new Promise(resolve => setTimeout(resolve, 1)); // Add delay
               
-              const threadResponse = await serverClient.client.threads.create();
+              // Use the runtime client instance
+              const threadResponse = await serverClient.client.threads.create(); 
               threadId = threadResponse.thread_id;
               console.log(`[POST /api/chat] Created new thread: ${threadId}`);
             } else if (!threadId) {
@@ -189,6 +195,7 @@ export async function POST(req: NextRequest) {
             
             // Create run with additional context if needed
             console.log(`[POST /api/chat] Creating run with input:`, { query: messageContent, ...contextSetup });
+            // Use the runtime client instance
             const run = await serverClient.client.runs.create(
               threadId!,
               assistantId,
@@ -214,6 +221,7 @@ export async function POST(req: NextRequest) {
             
             for (let attempt = 0; attempt < 45; attempt++) { // Increase timeout to 45 seconds
               try {
+                // Use the runtime client instance
                 const runState = await serverClient.client.runs.get(threadId!, run.run_id);
                 
                 // Reset error counter on successful API call
@@ -301,6 +309,7 @@ export async function POST(req: NextRequest) {
             }
             
             // Get final state
+            // Use the runtime client instance
             const finalThreadState = await serverClient.client.threads.getState(threadId!);
             
             // Extract response and sources
@@ -420,19 +429,21 @@ export async function POST(req: NextRequest) {
     // --- Create Run & Poll --- 
     let runId: string | undefined;
     try {
-      const serverClient = createServerClient();
+      // const serverClient = createServerClient(); // No need to recreate
       
       // Create a new thread on the server
       if (isNewThread) {
         console.log(`[POST /api/chat - Polling+GetState] Creating new thread on server...`);
-        const threadResponse = await serverClient.client.threads.create();
+        // Use the runtime client instance
+        const threadResponse = await serverClient.client.threads.create(); 
         threadId = threadResponse.thread_id;
         console.log(`[POST /api/chat - Polling+GetState] Created new server thread: ${threadId}`);
       }
       
       console.log(`[POST /api/chat - Polling+GetState] Calling serverClient.client.runs.create...`);
+      // Use the runtime client instance
       const run = await serverClient.client.runs.create(
-          threadId, 
+          threadId!, 
           assistantId,
           {
               input: { query: messageContent }, 
@@ -465,8 +476,9 @@ export async function POST(req: NextRequest) {
     // --- Fetch Final State --- 
     try {
         console.log(`[POST /api/chat - Polling+GetState] Fetching final state for thread: ${threadId}`);
-        const serverClient = createServerClient(); // Re-create client just in case
-        const finalThreadState = await serverClient.client.threads.getState(threadId);
+        // Use the runtime client instance
+        // const serverClient = createServerClient(); // No need to recreate
+        const finalThreadState = await serverClient.client.threads.getState(threadId); 
         console.log('[POST /api/chat - Polling+GetState] Final thread state received:', JSON.stringify(finalThreadState, null, 2));
 
         // --- Extract final response and sources from the Thread State --- 

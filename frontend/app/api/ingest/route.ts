@@ -2,7 +2,7 @@
 // app/api/ingest/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { Buffer } from 'buffer'; // Need Buffer again
-import { langGraphServerClient } from '@/lib/langgraph-server';
+import { createServerClient } from '@/lib/langgraph-server';
 import { PDFDocument } from '@/types/graphTypes';
 import { type Message as AIMessage } from 'ai';
 
@@ -35,12 +35,13 @@ const ALLOWED_FILE_LABELS = 'PDF, DOCX, or PPTX';
 export async function POST(request: NextRequest) {
   console.log("[/api/ingest] Received POST request (Send Encoded Files Plan).");
   
+  // Get the client instance at runtime
+  const serverClient = createServerClient(); 
+  
   try {
     // --- Env Var Check --- 
-    if (!process.env.LANGGRAPH_INGESTION_ASSISTANT_ID) {
-        console.error("[/api/ingest] LANGGRAPH_INGESTION_ASSISTANT_ID not set.");
-        return NextResponse.json({ error: 'Server config error' }, { status: 500 });
-    }
+    // Env var checks are now inside createServerClient()
+    // ... removed check ...
     console.log("[/api/ingest] Ingestion Assistant ID found.");
     const formData = await request.formData();
     const files: File[] = [];
@@ -101,13 +102,13 @@ export async function POST(request: NextRequest) {
 
     // --- Call Backend Graph --- 
     console.log(`[/api/ingest] Calling backend graph with encoded files...`);
-    const thread = await langGraphServerClient.createThread();
+    // Use the runtime client instance
+    const thread = await serverClient.createThread(); 
     console.log(`[/api/ingest] Created thread ${thread.thread_id}.`);
     const graphInput = { files: filesToProcess }; // Use the encoded files array
     
-    // IMPORTANT: Use client.runs.create() instead of wait()
-    // We will poll for the status from the frontend
-    const run = await langGraphServerClient.client.runs.create(
+    // Use the runtime client instance
+    const run = await serverClient.client.runs.create( 
         thread.thread_id,
         'ingestion_graph', // Target backend graph name 
         { 
