@@ -230,17 +230,23 @@ export async function POST(req: NextRequest) {
               }
             }
             
-            // --- Send Final SSE Message --- 
-            const finalResponseData = {
-              thinking: false, // Indicate thinking is finished
-              response: finalResponseContent || "Sorry, I couldn't generate a response.",
-              sources: finalSources,
-              threadId: threadId, 
-            };
-            console.log('[SSE] Sending Final Response Data:', JSON.stringify(finalResponseData).substring(0, 200) + '...');
-            controller.enqueue(sendThinkingUpdate(finalResponseData));
-
-            // --- Save to Supabase (remains the same) --- 
+            // --- Send Final SSE Message (Mimic AI SDK Text Stream) --- 
+            if (finalResponseContent) {
+              // Escape the response content properly for JSON string embedding
+              const escapedContent = JSON.stringify(finalResponseContent).slice(1, -1);
+              const messageChunk = `0:"${escapedContent}"\n`;
+              console.log('[SSE] Sending final response text chunk:', messageChunk);
+              controller.enqueue(encoder.encode(messageChunk));
+              await new Promise(resolve => setTimeout(resolve, 1)); // Small delay
+            } else {
+              // Send empty text chunk if no response
+              const emptyChunk = `0:""\n`;
+              console.log('[SSE] Sending empty text chunk.');
+              controller.enqueue(encoder.encode(emptyChunk));
+              await new Promise(resolve => setTimeout(resolve, 1));
+            }
+            
+            // --- Save to Supabase (using the extracted finalResponseContent) --- 
             const conversation = await getConversationByThreadId(threadId!); 
             if (conversation) {
               await addMessageToConversation(conversation.id, { content: messageContent, role: 'user' });
