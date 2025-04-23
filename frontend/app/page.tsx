@@ -216,21 +216,12 @@ function ChatInterface() {
     setInput,
     reload,
   } = useChat({
-    api: '/api/chat',
+    api: 'https://chatbot-zzeo.onrender.com/chat/stream',
     id: threadId || undefined,
-    headers: { 
-      'Accept': 'text/event-stream' 
-    },
     body: {
       threadId: threadId
     },
     onResponse: (response) => {
-      const newThreadId = response.headers.get('X-Thread-Id');
-      if (newThreadId && newThreadId !== threadId) {
-        console.log("Received new thread ID from API:", newThreadId);
-        setThreadId(newThreadId);
-        router.replace(`/?threadId=${newThreadId}`, { scroll: false });
-      }
     },
     onFinish: (message) => {
       console.log("Chat finished, final message:", message);
