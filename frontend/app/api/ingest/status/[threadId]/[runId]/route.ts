@@ -19,11 +19,12 @@ function calculateProgress(runState: any, threadValues?: Record<string, any>): n
     // If the thread includes processing step info
     if (threadValues?.processingStep) {
       switch (threadValues.processingStep) {
-        case 'ingestDocs': 
+        case 'ingestDocs': {
           // For storing embeddings, start at 75% and gradually increase
           const timeInEmbedding = getElapsedTime(runState.created_at);
           // Assume embedding takes about 30 seconds, increase from 75% to 95% during this time
           return Math.min(95, 75 + Math.min(20, (timeInEmbedding / 30000) * 20));
+        }
         
         case 'processFiles': {
           // If we have file processing details
@@ -44,11 +45,12 @@ function calculateProgress(runState: any, threadValues?: Record<string, any>): n
           // Square root provides a nice curve that moves quickly at first then slows down
           return Math.min(75, Math.round(Math.sqrt(fileProgress) * 70));
         }
-        default: 
+        default: {
           // Time-based fallback for unknown processing step
           const elapsed = getElapsedTime(runState.created_at);
           const estimatedTotalTime = 60 * 1000; // Assume 1 minute total time
           return Math.min(75, Math.round((elapsed / estimatedTotalTime) * 70));
+        }
       }
     }
     

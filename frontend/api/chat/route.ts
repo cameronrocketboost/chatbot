@@ -84,7 +84,7 @@ export async function POST(request: NextRequest) {
         
         // TODO: Replace "YOUR_ASSISTANT_ID" with the actual ID/name of your LangGraph graph (e.g., "retrieval_graph")
         // TODO: Verify the 'input' structure matches your graph's expected input schema.
-        const streamResponse = langGraphServerClient.runs.stream(
+        const streamResponse = langGraphServerClient.client.runs.stream(
           threadId,
           "YOUR_ASSISTANT_ID", // Replace with your graph ID
           {
@@ -99,45 +99,14 @@ export async function POST(request: NextRequest) {
         //       The current logic based on event.ops and specific paths is likely incompatible.
         //       Inspect the actual 'chunk' objects from streamResponse to adapt this logic.
         for await (const chunk of streamResponse) { 
-          // --- START OF LOGIC TO BE REVISED ---
-          // LangGraph streamLog yields events with 'ops' // <-- This assumption might be wrong for runs.stream
-          // The following logic based on event.ops and specific paths needs review/replacement
-          if (chunk.event === 'on_chat_model_stream') { // Example: Handling LLM stream tokens
-            // Assuming chunk.data.chunk contains the message content
-            // Send message chunk...
-             sendSSE('messages/partial', chunk.data.chunk); 
-          } else if (chunk.event === 'on_tool_start' && chunk.name === 'retrieve') { // Example: Handle tool start
-             sendSSE('updates', { retrieveDocuments: { thinking: true }});
-          } else if (chunk.event === 'on_tool_end' && chunk.name === 'retrieve') { // Example: Handle tool end
-             // Assuming chunk.data.output contains documents
-             const documents = chunk.data.output ?? [];
-             const enhancedDocs = mapRetrievalStrategy(documents);
-             sendSSE('updates', { retrieveDocuments: { documents: enhancedDocs } });
-          } // Add more handlers for other relevant event types ('on_chain_start', 'on_chain_end', etc.)
-          // --- END OF LOGIC TO BE REVISED ---
-
-        //   // Original logic (likely needs removal/replacement):
-        //   for (const op of chunk.ops) { // Assuming chunk has 'ops' - VERIFY THIS
-        //     if (op.op === 'add' || op.op === 'replace') { 
-        //       if (op.path === `/logs/${op.run_id}/streamed_output/-` || op.path.endsWith('/messages/-')) {
-        //          sendSSE('messages/partial', op.value); 
-        //       }
-        //       else if (op.path.endsWith('/retrieveDocuments/final_state/documents')) {
-        //          const documents = op.value ?? [];
-        //          const enhancedDocs = mapRetrievalStrategy(documents);
-        //          sendSSE('updates', { retrieveDocuments: { documents: enhancedDocs } });
-        //       }
-        //       else if (op.path.startsWith('/logs/') && op.path.endsWith('/final_state')) {
-        //          const nodeNameMatch = op.path.match(/\\/logs\\/([^\\/]+)\\/final_state/);
-        //          const currentNode = nodeNameMatch ? nodeNameMatch[1] : null;
-        //          
-        //          if (currentNode && currentNode !== prevNode) {
-        //             prevNode = currentNode;
-        //             // ... existing thinking update logic ...
-        //          }
-        //       } 
-        //     }
-        //   }
+          // --- REPLACED INCOMPATIBLE LOGIC --- 
+          console.log("Received stream chunk:", chunk);
+          // TODO: Add logic here to handle the actual chunk structure.
+          //       Check chunk.event ('values', 'messages', 'updates', 'metadata', etc.) 
+          //       and chunk.data or other properties based on the event type
+          //       to extract thinking states, partial messages, documents, etc.
+          //       and send appropriate SSE messages using sendSSE().
+          // --- END OF REPLACEMENT --- 
          }
         
         // Fetch finalThreadState - This might also need adjustment depending on how state is finalized
