@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getConversationWithMessages, updateConversationTitle, deleteConversation } from '@/lib/supabase-conversations';
 import { langGraphServerClient } from '@/lib/langgraph-server';
+import { getSupabaseServerClient } from '@/lib/supabase-server';
 
 export const dynamic = 'force-dynamic'; // Prevent build-time execution
 
