@@ -470,3 +470,9 @@ To make document retrieval more context-aware and improve the quality of respons
 - **Goal:** Fix deployment failure caused by incorrect Start Command.
 - **Issue:** Render logs show `error Command "langgraph:start" not found.`
 - **Action Required:** Update the **Start Command** in Render service settings for the backend. Change it from `yarn langgraph:start` to the correct script defined in `backend/package.json` (e.g., `yarn start` or `yarn serve`).
+
+*   [ ] Add specific dependencies (`express`, `cors`, `@types/express`, `@types/cors`) to `backend/package.json`.
+*   [ ] Ensure `backend/.env` contains `PORT` and secure `ALLOWED_ORIGINS`.
+*   [ ] Add all variables from `backend/.env` to Render environment variables.
+*   [ ] Ensure `backend/package.json` has correct `build` and `start` scripts.
+*   [ ] Set Render Start Command to `yarn install && yarn build && yarn start`.
