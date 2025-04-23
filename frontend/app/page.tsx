@@ -218,14 +218,11 @@ function ChatInterface() {
   } = useChat({
     api: '/api/chat',
     id: threadId || undefined,
+    headers: { 
+      'Accept': 'text/event-stream' 
+    },
     body: {
       threadId: threadId
-    },
-    // Explicitly set Accept header for SSE
-    fetchOptions: {
-      headers: {
-        'Accept': 'text/event-stream'
-      }
     },
     onResponse: (response) => {
       const newThreadId = response.headers.get('X-Thread-Id');
