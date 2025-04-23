@@ -227,41 +227,57 @@ app.get('/', (_req: express.Request, res: express.Response) => { // Add types
 // --- New SSE Chat Streaming Endpoint --- 
 app.post('/chat/stream', async (req: express.Request, res: express.Response): Promise<void> => {
   console.log("[POST /chat/stream] Request received.");
-  let { message, threadId } = req.body as { message?: string; threadId?: string }; 
 
-  if (!message) {
-    res.status(400).json({ error: 'Message content is required' });
+  // --- Extract data from Vercel AI SDK request body --- 
+  // The hook sends the history in `messages` and the threadId in `body.threadId`
+  const requestBody = req.body as { messages?: { role: string; content: string }[], threadId?: string };
+  const messages = requestBody?.messages ?? [];
+  const currentThreadIdFromRequest = requestBody?.threadId;
+
+  // Get the actual user query from the last message in the array
+  const userMessageContent = messages.length > 0 ? messages[messages.length - 1].content : null;
+
+  if (!userMessageContent) {
+    console.warn("[POST /chat/stream] No message content found in request body messages array.", req.body);
+    res.status(400).json({ error: 'Message content not found in messages array' });
     return;
   }
   
   const assistantId = "retrieval_graph"; 
 
-  let currentThreadId = threadId; // Use a local variable for the request scope
+  let currentThreadId = currentThreadIdFromRequest; // Use the threadId passed from the frontend
 
   try {
-    // Create a new thread if one isn't provided & save user message
+    // --- Ensure Thread Exists & Save User Message --- 
     if (!currentThreadId) {
-      console.log("[POST /chat/stream] No threadId provided, creating new thread...");
+      // If frontend didn't provide a threadId (e.g., first message), create one.
+      console.log("[POST /chat/stream] No threadId in request body, creating new thread...");
       const newThread = await langGraphClient.threads.create();
       currentThreadId = newThread.thread_id;
       console.log(`[POST /chat/stream] Created new thread: ${currentThreadId}`);
+      // Send the new threadId back to the client immediately if possible (before SSE headers)
       res.write(`event: thread_id\ndata: ${JSON.stringify({ threadId: currentThreadId })}\n\n`);
-      await addMessageToConversation(currentThreadId, { role: 'user', content: message });
+      // Save the user message now that we have the threadId
+      await addMessageToConversation(currentThreadId, { role: 'user', content: userMessageContent });
     } else {
-        await addMessageToConversation(currentThreadId, { role: 'user', content: message });
+        // Save user message for existing thread
+        await addMessageToConversation(currentThreadId, { role: 'user', content: userMessageContent });
     }
 
-    // Set SSE headers
+    // --- Set SSE Headers --- 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
+    res.flushHeaders(); // Send headers immediately
 
     console.log(`[POST /chat/stream] Starting stream for thread ${currentThreadId}...`);
 
+    // --- Prepare Graph Input --- 
     const history = await getMessageHistory(currentThreadId); 
-    const input = { query: message, contextMessages: history || [] }; 
+    // Pass the user query and fetched history to the graph
+    const input = { query: userMessageContent, contextMessages: history || [] }; 
 
+    // --- Stream Graph Execution --- 
     const streamResponse = langGraphClient.runs.stream(
       currentThreadId,
       assistantId,
@@ -285,6 +301,7 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
     
     console.log(`[POST /chat/stream] Stream finished for thread ${currentThreadId}.`);
 
+    // --- Save Assistant Response --- 
     if (accumulatedContent) {
         console.log(`[POST /chat/stream] Fetching final state for thread ${currentThreadId}...`);
         const finalState: any = await langGraphClient.threads.getState(currentThreadId);
@@ -306,6 +323,7 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
     res.end(); 
 
   } catch (error: any) {
+     // --- Error Handling --- 
     const errorThreadId = currentThreadId || 'N/A'; 
     console.error(`[POST /chat/stream] Error during stream for thread ${errorThreadId}:`, error);
     try {
@@ -313,6 +331,7 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
          res.status(500).json({ error: "Failed to process chat stream", details: error.message });
          return;
       } else {
+        // Attempt to send an error event over SSE
         res.write(`event: error\ndata: ${JSON.stringify({ message: error.message || 'Unknown stream error' })}\n\n`);
         res.end();
       }
