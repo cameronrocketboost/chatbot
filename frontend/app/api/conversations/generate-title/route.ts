@@ -1,17 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import OpenAI from 'openai';
+import { getOpenAI } from '@/lib/openai-client'; // Import the lazy getter
 import { getConversationWithMessages, updateConversationTitle } from '@/lib/supabase-conversations';
 // import { generateTitle } from '@/lib/openai-utils'; // Removed potentially incorrect import
-
-// Initialize OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 
 export const dynamic = 'force-dynamic'; // Prevent build-time execution
 
 export async function POST(request: NextRequest) {
   try {
+    // Get OpenAI client at runtime
+    const openai = getOpenAI();
+    
     const body = await request.json();
     const { conversationId, message } = body;
     
