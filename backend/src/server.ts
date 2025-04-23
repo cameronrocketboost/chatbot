@@ -7,7 +7,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { Client as LangGraphClient } from '@langchain/langgraph-sdk'; // Renamed to avoid conflict
-import { v4 as uuidv4 } from 'uuid'; // For generating thread IDs if needed
+// import { v4 as uuidv4 } from 'uuid'; // REMOVED - Unused import
 import { createClient, SupabaseClient } from '@supabase/supabase-js'; // Import Supabase
 import { AIMessage, HumanMessage, BaseMessage } from '@langchain/core/messages'; // Import message types
 
@@ -187,19 +187,8 @@ async function getMessageHistory(threadId: string, limit: number = 10): Promise<
   }
 }
 
-// --- Define Type for LLM Stream Chunk --- 
-// Based on expected structure for 'on_llm_stream' event
-interface LLMStreamChunk {
-    event: 'on_llm_stream';
-    data: { 
-        chunk?: string; 
-        // Add other potential fields if known/needed
-    };
-    // Add other top-level fields if known/needed (e.g., run_id, name)
-    run_id?: string;
-    name?: string;
-    tags?: string[];
-}
+// --- REMOVED Unused Type Definition --- 
+// interface LLMStreamChunk { ... }
 
 const app = express();
 const port = process.env.PORT || 2024;
