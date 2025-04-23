@@ -82,11 +82,10 @@ export async function POST(request: NextRequest) {
         // Call LangGraph server client to stream events for the thread
         // const iterator = langGraphServerClient.streamThreadEvents(threadId, { query: message }); // OLD INCORRECT METHOD
         
-        // TODO: Replace "YOUR_ASSISTANT_ID" with the actual ID/name of your LangGraph graph (e.g., "retrieval_graph")
         // TODO: Verify the 'input' structure matches your graph's expected input schema.
         const streamResponse = langGraphServerClient.client.runs.stream(
           threadId,
-          "YOUR_ASSISTANT_ID", // Replace with your graph ID
+          "retrieval_graph", // Use the graph name exposed by the backend
           {
             input: { messages: [{ role: "user", content: message }] }, // Adjust input structure if needed
             streamMode: "updates", // Or "events" - choose based on required detail
