@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { client } from '@/lib/langgraph-client';
-import { langGraphServerClient } from '@/lib/langgraph-server';
+import { createServerClient } from '@/lib/langgraph-server';
 
 // Placeholder definition for THINKING_STAGES - Adjust if defined elsewhere
 const THINKING_STAGES = {
@@ -69,6 +69,9 @@ export async function POST(request: NextRequest) {
     );
   }
   
+  // Get client instance at runtime
+  const serverClient = createServerClient();
+  
   // Create an SSE response
   const customReadable = new ReadableStream({
     async start(controller) {
@@ -82,8 +85,8 @@ export async function POST(request: NextRequest) {
         // Call LangGraph server client to stream events for the thread
         // const iterator = langGraphServerClient.streamThreadEvents(threadId, { query: message }); // OLD INCORRECT METHOD
         
-        // TODO: Verify the 'input' structure matches your graph's expected input schema.
-        const streamResponse = langGraphServerClient.client.runs.stream(
+        // Use the runtime client instance
+        const streamResponse = serverClient.client.runs.stream(
           threadId,
           "retrieval_graph", // Use the graph name exposed by the backend
           {
@@ -108,8 +111,8 @@ export async function POST(request: NextRequest) {
           // --- END OF REPLACEMENT --- 
          }
         
-        // Fetch finalThreadState - This might also need adjustment depending on how state is finalized
-        const finalThreadState = await langGraphServerClient.getThreadState(threadId);
+        // Fetch finalThreadState - Use the runtime client instance
+        const finalThreadState = await serverClient.getThreadState(threadId);
         
         // Access response and documents (sources) from the .values property of the state
         const finalValues = finalThreadState?.values ?? {};

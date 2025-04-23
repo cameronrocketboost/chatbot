@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { langGraphServerClient } from '@/lib/langgraph-server';
+import { createServerClient } from '@/lib/langgraph-server';
 
 // Add cache control headers to prevent Next.js from caching large responses
 export const dynamic = 'force-dynamic';
@@ -134,6 +134,9 @@ export async function GET(
 ) {
   const threadId = params.threadId;
   const runId = params.runId;
+  
+  // Get the client instance at runtime
+  const serverClient = createServerClient();
 
   if (!threadId || !runId) {
     return NextResponse.json({ error: 'Thread ID and Run ID are required' }, { status: 400 });
@@ -142,8 +145,8 @@ export async function GET(
   try {
     console.log(`[/api/ingest/status] Polling status for threadId: ${threadId}, runId: ${runId}`);
     
-    // Use the LangServe client to get the state of the run using both IDs
-    const runState = await langGraphServerClient.client.runs.get(threadId, runId);
+    // Use the runtime client instance
+    const runState = await serverClient.client.runs.get(threadId, runId);
     
     console.log(`[/api/ingest/status] Run status for ${runId}: ${runState.status}`);
 
@@ -156,8 +159,8 @@ export async function GET(
 
     if (runState.status === 'success') {
       try {
-        // Get the thread state with minimal information
-        threadState = await langGraphServerClient.client.threads.getState(threadId);
+        // Use the runtime client instance
+        threadState = await serverClient.client.threads.getState(threadId);
         
         // Extract only what we need from the state (avoids large data transfer)
         if (threadState && threadState.values) {

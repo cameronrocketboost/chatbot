@@ -32,6 +32,3 @@ export const createServerClient = () => {
   clientInstance = new LangGraphBase(client);
   return clientInstance;
 };
-
-// Export all methods from the base class instance
-export const langGraphServerClient = createServerClient();

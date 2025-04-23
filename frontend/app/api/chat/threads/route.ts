@@ -1,16 +1,17 @@
+import { createServerClient } from '@/lib/langgraph-server';
 import { NextRequest, NextResponse } from 'next/server';
-import { langGraphServerClient } from '@/lib/langgraph-server';
 
 export const dynamic = 'force-dynamic'; // Prevent prerendering at build time
 
 /**
  * Creates a new LangGraph thread (conversation)
  */
-export async function POST() {
+export async function POST(req: NextRequest) {
   console.log("[/api/chat/threads] Received POST request to create thread.");
   try {
     // Use the LangServe client to create a new thread on the backend
-    const thread = await langGraphServerClient.createThread();
+    const serverClient = createServerClient();
+    const thread = await serverClient.createThread();
     
     if (!thread || !thread.thread_id) {
       throw new Error('Backend did not return a valid thread object.');

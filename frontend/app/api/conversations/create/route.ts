@@ -1,25 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createServerClient } from '@/lib/langgraph-server';
 import { createConversation, getConversationWithMessages } from '@/lib/supabase-conversations';
-import { langGraphServerClient } from '@/lib/langgraph-server';
+import { v4 as uuidv4 } from 'uuid';
 
 export const dynamic = 'force-dynamic'; // Prevent build-time execution
 
-export async function POST(request: NextRequest) {
+export async function POST(req: NextRequest) {
   try {
-    // Extract parameters
-    const body = await request.json();
-    const title = body.title || 'New Conversation';
-    
-    // Create a new thread in LangGraph
-    console.log('[API /conversations/create] Creating a new LangGraph thread');
-    const thread = await langGraphServerClient.createThread();
-    
-    if (!thread || !thread.thread_id) {
-      throw new Error('Failed to create LangGraph thread');
-    }
-    
+    console.log('POST /api/conversations/create called');
+    const serverClient = createServerClient(); // Get client at runtime
+
+    // Create a new thread using LangGraph SDK client
+    const thread = await serverClient.createThread();
     const threadId = thread.thread_id;
-    console.log(`[API /conversations/create] Created LangGraph thread: ${threadId}`);
+    console.log(`Created new thread: ${threadId}`);
+
+    // Extract parameters
+    const body = await req.json();
+    const title = body.title || 'New Conversation';
     
     // Create conversation record in Supabase
     console.log(`[API /conversations/create] Creating Supabase conversation record for thread: ${threadId}`);
