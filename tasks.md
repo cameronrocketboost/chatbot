@@ -119,12 +119,13 @@ _After adding the env-vars in Netlify, creating a frontend/netlify.toml that poi
 
 *   **Investigate Runtime Errors (Post-Deployment):**
     *   [x] Verify Netlify `NEXT_PUBLIC_LANGGRAPH_API_URL` points to correct deployed Render backend URL.
-    *   [ ] Check Render backend logs for runtime errors (post-build, e.g., crashes, connection issues) - Check around 12:54 GMT for errors.
+    *   [ ] Check Render backend logs for runtime errors (post-build, e.g., crashes, connection issues) - Check around 12:54 / 16:51 GMT for errors.
     *   [x] Confirm correct `assistantId` used in frontend `/api/chat` route (`retrieval_graph` matches Dockerfile).
     *   [ ] Check Render backend CORS logs (less likely).
-    *   [ ] Check Render HTTP Request logs for specific 404 details (path requested) - Error changed to 502.
-    *   [ ] **Check Netlify Function Logs:** Examine logs for `/api/chat` function around 12:54 GMT for timeouts or specific crash errors.
-    *   [ ] Review polling logic in `/api/chat/route.ts` as potential timeout cause.
+    *   [ ] Check Render HTTP Request logs for specific 404/502 details.
+    *   [ ] **Check Netlify Function Logs:** Examine logs for `/api/chat` function around **16:51 GMT** (Request ID `01JSHRYKPFKA7VR06BBBX1KAFK`) for **timeouts** or crash errors (with `streamMode: "values"`).
+    *   [ ] ~~Review polling logic in `/api/chat/route.ts` as potential timeout cause.~~ (Polling removed)
+    *   [ ] Review `streamMode: "values"` logic - Does backend consistently finish within timeout?
     *   [ ] Consider potential SDK/LangServe version mismatch.
     *   [ ] Redeploy backend with cleared cache.
 
