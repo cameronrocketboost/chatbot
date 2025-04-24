@@ -201,8 +201,8 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
     return;
   }
   
-  // --- Backend safety net for short messages (Revised) --- 
-  if (trimmedContent.length < 2) {
+  // --- Backend safety net for short messages (Revised) ---
+  if (trimmedContent.length < 3) {
     console.log(`[POST /chat/stream] Query too short (${trimmedContent.length} chars), sending clarification.`);
     // Set headers using writeHead for SSE
     res.writeHead(200, {
