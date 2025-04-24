@@ -20,7 +20,7 @@ export const AgentStateAnnotation = Annotation.Root({
    * A list of messages containing the chat history.
    */
   messages: Annotation<any[]>({
-    value: (_, update) => update,
+    reducer: (prev, next) => prev.concat(next),
     default: () => [],
   }),
   /**
