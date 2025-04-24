@@ -181,9 +181,13 @@ const ChatInputForm: React.FC<ChatInputFormProps> = ({ input, handleInputChange,
       />
       <Button
         type="submit"
-        disabled={isLoading || !input.trim() || !threadIdExists}
+        disabled={isLoading || input.trim().length < 3 || !threadIdExists}
         className="bg-sladen-navy hover:bg-sladen-teal text-white dark:bg-sladen-teal dark:hover:bg-sladen-navy"
-        title={!threadIdExists ? "Please start a new chat first" : "Send message"}
+        title={!threadIdExists
+          ? "Please start a new chat first"
+          : input.trim().length < 3
+          ? "Type at least 3 characters"
+          : "Send message"}
       >
         {isLoading ? (
           <Loader2 className="h-5 w-5 animate-spin" />
