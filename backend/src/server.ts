@@ -249,6 +249,7 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
 
     // --- Direct Graph Execution & Streaming Loop --- 
     let finalState: any = null; // Variable to store the final state
+    let assistantMessageSent = false; // Flag to track if we sent during the loop
 
     try {
       console.log(`[POST /chat/stream] Invoking retrievalGraph.stream for thread ${currentThreadId}`);
@@ -256,27 +257,45 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
       
       // Iterate over the stream of patches and values
       for await (const patch of stream) {
-        // console.log("[Stream Patch]:", JSON.stringify(patch, null, 2)); // DEBUG: Log every patch
+        console.log("[Stream Patch]:", JSON.stringify(patch, null, 2)); // Keep DEBUG log active
         
         // Check if the patch contains messages updates
         if (patch && typeof patch === 'object' && 'messages' in patch && Array.isArray(patch.messages)) {
-          // Get the last message added in this patch
           const lastMessage = patch.messages[patch.messages.length - 1];
           
-          // Check if it's an AI message (either type 'ai' or role 'assistant')
-          // Also ensure it's a valid BaseMessage object before sending
-          if (lastMessage && (lastMessage.type === 'ai' || lastMessage.role === 'assistant') && lastMessage.content) {
+          if (lastMessage && (lastMessage.type === 'ai' || lastMessage.role === 'assistant' || lastMessage.id?.includes('AIMessageChunk')) && lastMessage.content) {
             console.log('[POST /chat/stream] Sending assistant message patch via SSE');
-            // Send the AI message object using the standard SSE format
             sendSSE(res, lastMessage, 'message'); 
+            assistantMessageSent = true; // Mark as sent
           }
         }
         
-        // Keep track of the latest full state (the last patch is the final state)
+        // Keep track of the latest patch (which might be the final state)
         finalState = patch; 
       }
       console.log(`[POST /chat/stream] Graph stream finished for thread ${currentThreadId}.`);
-      console.log('[POST /chat/stream] Final Graph State:', JSON.stringify(finalState, null, 2)); // Log the final state
+      console.log('[POST /chat/stream] Final Data Received:', JSON.stringify(finalState, null, 2)); // Log the final data
+
+      // --- Check Final State if no message was sent during loop --- 
+      if (!assistantMessageSent && finalState && Array.isArray(finalState) && finalState[0] === 'values' && finalState[1]?.messages) {
+          console.log('[POST /chat/stream] Extracting message from final state values.');
+          const finalMessages = finalState[1].messages;
+          if (Array.isArray(finalMessages) && finalMessages.length > 0) {
+              const lastMessage = finalMessages[finalMessages.length - 1];
+              // Check if it's an AI message (allow AIMessageChunk type too)
+              if (lastMessage && (lastMessage.type === 'ai' || lastMessage.role === 'assistant' || lastMessage.id?.includes('AIMessageChunk')) && lastMessage.content) {
+                  console.log('[POST /chat/stream] Sending final state assistant message via SSE');
+                  sendSSE(res, lastMessage, 'message');
+                  assistantMessageSent = true; // Mark as sent
+              }
+          } else {
+              console.warn('[POST /chat/stream] Final state values exist but messages array is empty.');
+          }
+      } else if (!assistantMessageSent) {
+          console.warn('[POST /chat/stream] No assistant message sent during loop and final state format is unexpected or lacks messages.', finalState);
+          // Optionally send an error or default message here if needed
+          sendSSE(res, { role: 'assistant', content: 'Sorry, I could not process the response.' }, 'message');
+      }
 
     } catch (streamError: any) {
       console.error(`[POST /chat/stream] Error *during* graph stream execution for thread ${currentThreadId}:`, streamError);
