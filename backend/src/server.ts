@@ -184,7 +184,8 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
   const userMessageContent = messages.length > 0 ? messages[messages.length - 1].content : null;
 
   // --- Validate User Message --- 
-  if (!userMessageContent || userMessageContent.trim() === '') { // Check for empty/whitespace-only
+  const trimmedContent = userMessageContent?.trim() ?? '';
+  if (trimmedContent === '') { // Check for empty/whitespace-only
     console.warn("[POST /chat/stream] Missing or empty message content.", req.body);
     // Send an error back via SSE if possible, otherwise standard HTTP error
     if (res.headersSent && !res.writableEnded) {
@@ -193,6 +194,24 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
     } else if (!res.headersSent) {
         res.status(400).json({ error: 'Message content cannot be empty' });
     }
+    return;
+  }
+  
+  // --- Backend safety net for short messages --- 
+  if (trimmedContent.length < 2) {
+    console.log(`[POST /chat/stream] Query too short (${trimmedContent.length} chars), sending clarification.`);
+    // Set headers first if not already sent (needed for SSE)
+    if (!res.headersSent) {
+      res.setHeader('Content-Type','text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders();
+    }
+    sendSSE(res, {
+      role: "assistant",
+      content: "I'll answer once you finish your question 🙂",
+    }, 'message');
+    res.end();
     return;
   }
   
@@ -230,8 +249,8 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
     const history = await getMessageHistory(currentThreadId!); 
     const graphInputState = {
       // Use the specific field names expected by the graph state
-      query: userMessageContent,           // Pass the non-empty user message
-      contextMessages: history,          // Pass the fetched history 
+      query: trimmedContent,                 // Pass the non-empty user message
+      contextMessages: history,            // Pass the fetched history 
     }; 
     
     // --- Prepare Graph Config --- 
@@ -249,7 +268,6 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
 
     // --- Direct Graph Execution & Streaming Loop --- 
     let finalState: any = null; // Variable to store the final state
-    let assistantMessageSent = false; // Flag to track if we sent during the loop
 
     try {
       console.log(`[POST /chat/stream] Invoking retrievalGraph.stream for thread ${currentThreadId}`);
@@ -257,45 +275,34 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
       
       // Iterate over the stream of patches and values
       for await (const patch of stream) {
-        console.log("[Stream Patch]:", JSON.stringify(patch, null, 2)); // Keep DEBUG log active
+        // CONCISE LOGGING
+        const meta = (patch as any).__meta__ || {}; // Extract metadata if present
+        const kind = Object.keys(patch)[0]; // Get the type of patch (e.g., "messages", "values")
+        console.log(
+          `[Stream Patch] node=${meta.langgraph_node || 'unknown'} type=${kind} ` +
+          (kind === "messages" && Array.isArray((patch as any).messages) ? `Δ=${(patch as any).messages.length}` : "")
+        );
+        // END CONCISE LOGGING
         
         // Check if the patch contains messages updates
         if (patch && typeof patch === 'object' && 'messages' in patch && Array.isArray(patch.messages)) {
           const lastMessage = patch.messages[patch.messages.length - 1];
           
-          if (lastMessage && (lastMessage.type === 'ai' || lastMessage.role === 'assistant' || lastMessage.id?.includes('AIMessageChunk')) && lastMessage.content) {
-            console.log('[POST /chat/stream] Sending assistant message patch via SSE');
+          // --- CORRECTED FILTER --- 
+          // Check if it's an AI message OR chunk using startsWith
+          if (lastMessage && (lastMessage.type?.startsWith("AIMessage") || lastMessage.role === "assistant") && lastMessage.content) { 
+            console.log('[POST /chat/stream] Sending assistant message/chunk patch via SSE');
             sendSSE(res, lastMessage, 'message'); 
-            assistantMessageSent = true; // Mark as sent
+            // assistantMessageSent = true; // No longer needed
           }
+          // --- END CORRECTED FILTER --- 
         }
         
         // Keep track of the latest patch (which might be the final state)
         finalState = patch; 
       }
       console.log(`[POST /chat/stream] Graph stream finished for thread ${currentThreadId}.`);
-      console.log('[POST /chat/stream] Final Data Received:', JSON.stringify(finalState, null, 2)); // Log the final data
-
-      // --- Check Final State if no message was sent during loop --- 
-      if (!assistantMessageSent && finalState && Array.isArray(finalState) && finalState[0] === 'values' && finalState[1]?.messages) {
-          console.log('[POST /chat/stream] Extracting message from final state values.');
-          const finalMessages = finalState[1].messages;
-          if (Array.isArray(finalMessages) && finalMessages.length > 0) {
-              const lastMessage = finalMessages[finalMessages.length - 1];
-              // Check if it's an AI message (allow AIMessageChunk type too)
-              if (lastMessage && (lastMessage.type === 'ai' || lastMessage.role === 'assistant' || lastMessage.id?.includes('AIMessageChunk')) && lastMessage.content) {
-                  console.log('[POST /chat/stream] Sending final state assistant message via SSE');
-                  sendSSE(res, lastMessage, 'message');
-                  assistantMessageSent = true; // Mark as sent
-              }
-          } else {
-              console.warn('[POST /chat/stream] Final state values exist but messages array is empty.');
-          }
-      } else if (!assistantMessageSent) {
-          console.warn('[POST /chat/stream] No assistant message sent during loop and final state format is unexpected or lacks messages.', finalState);
-          // Optionally send an error or default message here if needed
-          sendSSE(res, { role: 'assistant', content: 'Sorry, I could not process the response.' }, 'message');
-      }
+      console.log('[POST /chat/stream] Final Data Received:', JSON.stringify(finalState, null, 2)); // Keep logging final state for now
 
     } catch (streamError: any) {
       console.error(`[POST /chat/stream] Error *during* graph stream execution for thread ${currentThreadId}:`, streamError);
