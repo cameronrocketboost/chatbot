@@ -161,11 +161,10 @@ app.post('/conversations/create', async (req: express.Request, res: express.Resp
 });
 
 // --- Helper function to send SSE data frames ---
-function sendSSE(res: express.Response, data: any, eventType: string = 'message') {
+function sendSSE(res: express.Response, data: any, _eventType: string = 'message') {
   // Ensure response is writable before attempting to write
   if (!res.writableEnded) {
     try {
-      res.write(`event: ${eventType}\n`); // Standard SSE event field
       res.write(`data: ${JSON.stringify(data)}\n\n`); // Standard SSE data field + double newline
     } catch (error) {
       console.error("[SSE Helper] Error writing to stream:", error);
@@ -292,7 +291,6 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
     // End the SSE stream cleanly
     if (!res.writableEnded) {
       console.log('[POST /chat/stream] Ending SSE stream.');
-      sendSSE(res, { status: 'done' }, 'control'); // Optional: Send a control message indicating end
       res.end(); 
     }
 
