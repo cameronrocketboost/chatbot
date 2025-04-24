@@ -288,6 +288,21 @@ function ChatInterface() {
     }
   }, [router, setMessages, setInput, toast]);
 
+  // --- Modified handleSubmit to check for threadId ---
+  const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault(); 
+    if (!threadId) {
+      toast({
+        title: "No Active Chat",
+        description: "Please start a new chat before sending a message.",
+        variant: "destructive",
+      });
+      return;
+    }
+    // Call the original handleSubmit from useChat if threadId exists
+    handleSubmit(e);
+  };
+
   // Find the index of the first thinking message (using typedMessages)
   const thinkingMessageIndex = typedMessages.findIndex(msg =>
     msg.annotations?.some((ann): ann is ThinkingAnnotation => // Use the refined type guard
@@ -343,7 +358,7 @@ function ChatInterface() {
       <ChatInputForm
         input={input}
         handleInputChange={handleInputChange}
-        handleSubmit={handleSubmit}
+        handleSubmit={handleFormSubmit}
         isLoading={isLoading}
         handleNewChat={handleNewChat}
       />
