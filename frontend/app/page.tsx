@@ -1,28 +1,22 @@
 'use client';
 
 import type React from 'react';
+import { useRouter } from 'next/navigation';
 
 import { useToast } from '@/hooks/use-toast';
-import { useRef, useState, useEffect, useCallback, Suspense } from 'react';
+import { useRef, useState, useEffect, useCallback, Suspense, useLayoutEffect, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Paperclip, ArrowUp, Loader2, UploadCloud, Info, Search, FileText, Filter } from 'lucide-react';
+import { ArrowUp, Loader2, UploadCloud, Info, Search, FileText, Filter } from 'lucide-react';
 import { ExamplePrompts } from '@/components/example-prompts';
 import { ChatMessage } from '@/components/chat-message';
-import { FilePreview } from '@/components/file-preview';
-import {
-  AgentState,
-  documentType,
-  PDFDocument,
-  RetrieveDocumentsNodeUpdates,
-} from '@/types/graphTypes';
-import { Card, CardContent } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { useSearchParams, useRouter } from 'next/navigation';
 import { type Message as AIMessage, useChat } from 'ai/react';
 import type { JSONValue } from 'ai';
-import { v4 as uuidv4 } from 'uuid';
 import { UploadProgress } from '@/components/upload-progress';
+import { useThreadId } from '@/hooks/useThreadId';
+import { ErrorBanner } from '@/components/error-banner';
+import { isChatMessage } from '@/utils/chatUtils';
 
 // Define a specific type for thinking annotations
 type ThinkingAnnotation = { type: 'thinking'; [k: string]: JSONValue };
@@ -30,7 +24,7 @@ type ThinkingAnnotation = { type: 'thinking'; [k: string]: JSONValue };
 // Define custom Message type that extends AIMessage
 interface Message extends AIMessage {
   thinking?: string;
-  sources?: PDFDocument[];
+  sources?: any[];
   stage?: string;
   annotations?: (JSONValue | ThinkingAnnotation)[];
 }
@@ -167,15 +161,18 @@ interface ChatInputFormProps {
   handleSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
   isLoading: boolean;
   handleNewChat: () => void;
+  threadIdExists: boolean;
 }
 
-const ChatInputForm: React.FC<ChatInputFormProps> = ({ input, handleInputChange, handleSubmit, isLoading, handleNewChat }) => (
+const ChatInputForm: React.FC<ChatInputFormProps> = ({ input, handleInputChange, handleSubmit, isLoading, handleNewChat, threadIdExists }) => (
   <div className="p-4 border-t bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700">
     <form onSubmit={handleSubmit} className="flex items-center gap-2 max-w-3xl mx-auto">
-      <Button variant="outline" size="icon" onClick={handleNewChat} type="button" className="border-sladen-navy/20 dark:border-gray-600">
+      <Button variant="outline" size="icon" onClick={handleNewChat} type="button" className="border-sladen-navy/20 dark:border-gray-600" title="Start New Chat">
         <FileText className="h-4 w-4 text-sladen-teal" />
       </Button>
+      <label htmlFor="chat-input" className="sr-only">Chat message</label>
       <Input
+        id="chat-input"
         placeholder="Ask a question about your documents..."
         value={input}
         onChange={handleInputChange}
@@ -184,8 +181,9 @@ const ChatInputForm: React.FC<ChatInputFormProps> = ({ input, handleInputChange,
       />
       <Button
         type="submit"
-        disabled={isLoading || !input.trim()}
+        disabled={isLoading || !input.trim() || !threadIdExists}
         className="bg-sladen-navy hover:bg-sladen-teal text-white dark:bg-sladen-teal dark:hover:bg-sladen-navy"
+        title={!threadIdExists ? "Please start a new chat first" : "Send message"}
       >
         {isLoading ? (
           <Loader2 className="h-5 w-5 animate-spin" />
@@ -199,168 +197,112 @@ const ChatInputForm: React.FC<ChatInputFormProps> = ({ input, handleInputChange,
 
 // Chat Interface Component
 function ChatInterface() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const initialThreadId = searchParams.get('threadId');
-  const [threadId, setThreadId] = useState<string | null>(null);
+  const { threadId, isLoading: isThreadIdLoading, createAndSetNewThreadId } = useThreadId();
   const { toast } = useToast();
 
-  // Stage message for UX
-  const [stageMessage, setStageMessage] = useState<string | null>(null);
-  
+  // Define Backend URL from environment variable
+  const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || '';
+  if (!BACKEND_URL) {
+    // Optionally throw an error or log a warning if the URL is missing
+    console.warn('NEXT_PUBLIC_BACKEND_URL is not set. API calls may fail.');
+  }
+
   // Handle stage updates via useChat callbacks
   const {
     messages,
     input,
     handleInputChange,
     handleSubmit,
-    isLoading,
+    isLoading: isChatLoading,
     error,
     setMessages,
     setInput,
     reload,
   } = useChat({
-    api: 'https://chatbot-zzeo.onrender.com/chat/stream',
+    api: `${BACKEND_URL}/chat/stream`,
     id: threadId || undefined,
     body: { threadId: threadId },
-    onResponse: (response) => {
-      if (!stageMessage) {
-        setStageMessage('Generating response...');
-      }
-    },
     onError: (error) => {
       console.error('Chat error:', error);
-      setStageMessage(null);
     },
   });
   
   const typedMessages: Message[] = messages as Message[];
 
-  useEffect(() => {
-    if (initialThreadId) {
-      console.log("Using threadId from URL:", initialThreadId);
-      setThreadId(initialThreadId);
-    } else {
-      const storedThreadId = localStorage.getItem('chat_thread_id');
-      if (storedThreadId) {
-        console.log("Using threadId from localStorage:", storedThreadId);
-        setThreadId(storedThreadId);
-        router.replace(`/?threadId=${storedThreadId}`, { scroll: false });
-      } else {
-        console.log("No initial threadId found. Waiting for useChat to potentially create one.");
-      }
-    }
-  }, [initialThreadId, router]);
+  // --- Suggestion #4: Memoize message filtering --- 
+  const thinkingMessageIndex = useMemo(() => {
+    // Add null/undefined check for annotations
+    return typedMessages.findIndex(msg => 
+      msg.annotations?.some((ann): ann is ThinkingAnnotation => 
+        typeof ann === 'object' && ann !== null && !Array.isArray(ann) && 'type' in ann && ann.type === 'thinking'
+      )
+    );
+  }, [typedMessages]);
 
-  useEffect(() => {
-    if (threadId && threadId !== initialThreadId) {
-      localStorage.setItem('chat_thread_id', threadId);
-      router.replace(`/?threadId=${threadId}`, { scroll: false });
-    }
-  }, [threadId, initialThreadId, router]);
+  const messagesToRender = useMemo(() => {
+    return typedMessages
+      .filter(isChatMessage)
+      .filter((_msg, index) => 
+        (thinkingMessageIndex === -1 || index < thinkingMessageIndex)
+      );
+  }, [typedMessages, thinkingMessageIndex]);
 
+  // --- Suggestion #5: Improve Scrolling --- 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const scrollToBottom = useCallback(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, []);
-
-  useEffect(() => {
-      if (!isLoading) {
-          scrollToBottom();
-      }
-  }, [typedMessages, isLoading, scrollToBottom]);
+  // Use useLayoutEffect for scrolling to avoid flickering
+  useLayoutEffect(() => {
+    // Scroll to bottom only if the ref is attached
+    messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' }); 
+    // Using 'auto' might be smoother than 'smooth' during rapid updates
+  }, [messagesToRender]); // Scroll when the rendered messages change
 
   const handleNewChat = useCallback(async () => {
-    console.log("Creating new chat thread via API...");
-    try {
-      const response = await fetch('https://chatbot-zzeo.onrender.com/chat/threads', { method: 'POST' });
-      if (!response.ok) throw new Error(`Failed to create thread: ${response.statusText}`);
-      const data = await response.json();
-      const newThreadId = data.threadId;
-      console.log("New thread created:", newThreadId);
-      setMessages([]);
-      setInput('');
-      setThreadId(newThreadId);
-      router.push(`/?threadId=${newThreadId}`);
-    } catch (err: any) {
-      console.error("Error creating new chat:", err);
-      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    setMessages([]);
+    setInput('');
+    const newId = await createAndSetNewThreadId();
+    if (newId) {
+      // Maybe trigger a reload or other action if needed?
     }
-  }, [router, setMessages, setInput, toast]);
+  }, [createAndSetNewThreadId, setMessages, setInput]);
 
-  // --- Modified handleSubmit to check for threadId ---
-  const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault(); 
-    if (!threadId) {
-      toast({
-        title: "No Active Chat",
-        description: "Please start a new chat before sending a message.",
-        variant: "destructive",
-      });
-      return;
-    }
-    // Call the original handleSubmit from useChat if threadId exists
-    handleSubmit(e);
-  };
-
-  // Find the index of the first thinking message (using typedMessages)
-  const thinkingMessageIndex = typedMessages.findIndex(msg =>
-    msg.annotations?.some((ann): ann is ThinkingAnnotation => // Use the refined type guard
-      typeof ann === 'object' &&
-      ann !== null &&
-      !Array.isArray(ann) && // Explicitly check it's not an array
-      'type' in ann &&
-      ann.type === 'thinking' // Access type after guard confirms it exists
-    )
-  );
-
-  // Make TS understand only 'user' | 'assistant' reach <ChatMessage>
-  function isChatMessage(
-    msg: Message
-  ): msg is Message & { role: 'user' | 'assistant' } {
-    return msg.role === 'user' || msg.role === 'assistant';
-  }
-
-  // Filter messages for rendering (only user/assistant, before thinking message)
-  const messagesToRender = typedMessages
-    .filter(isChatMessage) // Add the type guard filter
-    .filter((msg, index) => 
-      (thinkingMessageIndex === -1 || index < thinkingMessageIndex)
-    );
+  // Combine loading states for the input form
+  const isOverallLoading = isChatLoading || isThreadIdLoading;
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-gray-950">
       {/* Chat History */}
-      <div className="flex-grow overflow-y-auto p-6 space-y-4 ">
-        {messagesToRender.length === 0 && !isLoading && (
+      <div className="flex-grow overflow-y-auto p-6 space-y-4 " aria-live="polite">
+        {isThreadIdLoading && (
+          <div className="flex justify-center items-center h-full"><Loader2 className="h-8 w-8 animate-spin text-sladen-teal" /></div>
+        )}
+        {!isThreadIdLoading && messagesToRender.length === 0 && !isChatLoading && (
           <InitialChatView onExampleClick={setInput} />
         )}
-        {messagesToRender.map((msg) => (
+        {!isThreadIdLoading && messagesToRender.map((msg) => (
             <ChatMessage key={msg.id} message={msg} />
         ))}
-        {thinkingMessageIndex !== -1 && typedMessages[thinkingMessageIndex] && isChatMessage(typedMessages[thinkingMessageIndex]) && (
-          <ChatMessage 
-              key={typedMessages[thinkingMessageIndex].id}
-              message={typedMessages[thinkingMessageIndex]} 
-          />
+        {!isThreadIdLoading && isChatLoading && (
+          <div className="flex justify-center items-center p-4 text-sladen-navy dark:text-gray-400">
+            <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+            <span>Generating response...</span>
+          </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Error Display from useChat */} 
+      {/* Error Display using ErrorBanner */}
       {error && (
-        <div className="p-4 border-t border-red-300 dark:border-red-700 bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-300">
-          <p>Error: {error.message}</p>
-        </div>
+        <ErrorBanner message={error.message} />
       )}
 
       {/* Input Area */}
       <ChatInputForm
         input={input}
         handleInputChange={handleInputChange}
-        handleSubmit={handleFormSubmit}
-        isLoading={isLoading}
+        handleSubmit={handleSubmit}
+        isLoading={isOverallLoading}
         handleNewChat={handleNewChat}
+        threadIdExists={!!threadId}
       />
     </div>
   );
@@ -369,8 +311,15 @@ function ChatInterface() {
 // Main Page component wraps the Suspense boundary
 export default function HomePage() {
   return (
-    <Suspense fallback={<div className="flex h-full items-center justify-center">Loading Chat...</div>}> 
+    // Only suspend the ChatInterface, show a smaller loader
+    <Suspense fallback={
+      <div className="flex h-full flex-grow items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-sladen-teal" />
+      </div>
+    }> 
       <ChatInterface />
     </Suspense>
+    // If there were parts of the page outside ChatInterface that didn't need suspension,
+    // they would go outside this Suspense boundary.
   );
 }
