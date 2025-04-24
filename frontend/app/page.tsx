@@ -246,10 +246,13 @@ function ChatInterface() {
       });
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
-      while (true) {
+      let doneReading = false;
+      while (!doneReading) {
         const { value, done } = await reader.read();
-        if (done) break;
-        parser.feed(decoder.decode(value));
+        doneReading = done;
+        if (!doneReading && value) {
+          parser.feed(decoder.decode(value));
+        }
       }
     } catch (err: any) {
       setError(err);
