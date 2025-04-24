@@ -11,12 +11,13 @@ import { ArrowUp, Loader2, UploadCloud, Info, Search, FileText, Filter } from 'l
 import { ExamplePrompts } from '@/components/example-prompts';
 import { ChatMessage } from '@/components/chat-message';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { type Message as AIMessage, useChat } from 'ai/react';
+import { type Message as AIMessage } from 'ai/react';
 import type { JSONValue } from 'ai';
 import { UploadProgress } from '@/components/upload-progress';
 import { useThreadId } from '@/hooks/useThreadId';
 import { ErrorBanner } from '@/components/error-banner';
 import { isChatMessage } from '@/utils/chatUtils';
+import { createParser, EventSourceMessage } from 'eventsource-parser';
 
 // Define a specific type for thinking annotations
 type ThinkingAnnotation = { type: 'thinking'; [k: string]: JSONValue };
@@ -211,27 +212,54 @@ function ChatInterface() {
     console.warn('NEXT_PUBLIC_BACKEND_URL is not set. API calls may fail.');
   }
 
-  // Handle stage updates via useChat callbacks
-  const {
-    messages,
-    input,
-    handleInputChange,
-    handleSubmit,
-    isLoading: isChatLoading,
-    error,
-    setMessages,
-    setInput,
-    reload,
-  } = useChat({
-    api: `${BACKEND_URL}/chat/stream`,
-    id: threadId || undefined,
-    body: { threadId: threadId },
-    onError: (error) => {
-      console.error('Chat error:', error);
-    },
-  });
+  // Custom SSE-based chat streamer
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState<string>("");
+  const [isChatLoading, setIsChatLoading] = useState<boolean>(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setInput(e.target.value);
+  };
+
+  const handleSubmit = useCallback(async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!threadId) return;
+    setError(null);
+    setIsChatLoading(true);
+    // Optimistically append user message
+    setMessages(prev => [...prev, { role: 'user', content: input }] as Message[]);
+    try {
+      const res = await fetch(`${BACKEND_URL}/chat/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threadId, messages: [{ role: 'user', content: input }] }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const parser = createParser({
+        onEvent(event: EventSourceMessage) {
+          // Handle data frames
+          if (event.data === '[DONE]') return;
+          const parsed = JSON.parse(event.data) as Message;
+          setMessages(prev => [...prev, parsed]);
+        }
+      });
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        parser.feed(decoder.decode(value));
+      }
+    } catch (err: any) {
+      setError(err);
+    } finally {
+      setIsChatLoading(false);
+      setInput('');
+    }
+  }, [BACKEND_URL, threadId, input]);
   
-  const typedMessages: Message[] = messages as Message[];
+  const typedMessages: Message[] = messages;
 
   // --- Suggestion #4: Memoize message filtering --- 
   const thinkingMessageIndex = useMemo(() => {
