@@ -279,7 +279,11 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
         parts: [{ type: 'text', text: finalAiMessageContent }],
         metadata: { sources: finalSources }
       };
-      res.write(`1:${JSON.stringify(finalMessagePayload)}\n`);
+      // --- ADD LOGGING --- 
+      const payloadString = JSON.stringify(finalMessagePayload);
+      console.log('[POST /chat/stream] Sending 1: frame payload:', payloadString);
+      // --- END ADD LOGGING ---
+      res.write(`1:${payloadString}\n`);
       console.log('[POST /chat/stream] Sent final message frame.');
     } else {
       console.warn('[POST /chat/stream] Response ended before final message could be sent.');
@@ -292,7 +296,14 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
     console.error(`[POST /chat/stream] Overall error for thread ${currentThreadId || 'N/A'}:`, error);
     // Clear interval just in case it wasn't cleared in finally (e.g., error before try block)
     // if (typeof heartbeatInterval !== 'undefined') clearInterval(heartbeatInterval);
-    if (res.headersSent && !res.writableEnded) { /* ... send error event ... */ }
+    if (res.headersSent && !res.writableEnded) { 
+      // Attempt to send an error frame if stream is still open
+      try {
+        res.write(`2:${JSON.stringify({ error: 'An unexpected server error occurred.' })}\n`);
+      } catch (writeError) {
+        console.error('[POST /chat/stream] Failed to write error frame to stream:', writeError);
+      } 
+    }
     if (!res.writableEnded) { res.end(); }
   }
 });
