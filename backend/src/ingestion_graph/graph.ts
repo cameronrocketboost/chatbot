@@ -9,7 +9,7 @@ import { Buffer } from 'buffer';
 import pdf from 'pdf-parse';
 import mammoth from 'mammoth';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import officeParser from 'officeparser';
 
 // Use original State/Config annotations
@@ -21,8 +21,8 @@ import { IndexStateAnnotation, IndexStateType } from './state.js';
 // } from './configuration.js';
 import { makeRetriever } from '../shared/retrieval.js';
 
-// Define the separator
-const SLIDE_SEPARATOR = '\n\n---SLIDE_SEPARATOR---\n\n';
+// Define the separator - NOTE: officeParser doesn't insert this, so it's currently unused by pptxSplitter
+// const SLIDE_SEPARATOR = '\n\n---SLIDE_SEPARATOR---\n\n';
 
 // Define file size limits
 const MAX_PPTX_SIZE = 100 * 1024 * 1024; // 100MB for PPTX files
@@ -34,11 +34,95 @@ const defaultSplitter = new RecursiveCharacterTextSplitter({
 });
 
 // Special splitter for PowerPoint presentations with larger chunks and more overlap
+// Removed SLIDE_SEPARATOR as officeParser doesn't provide it (Suggestion 1-C fix)
 const pptxSplitter = new RecursiveCharacterTextSplitter({
-  chunkSize: 1500,
+  chunkSize: 1500, // Consider tuning this further (Suggestion 1-C)
   chunkOverlap: 300,
-  separators: [SLIDE_SEPARATOR, "\n\n", "\n", " ", ""]
+  separators: ["\n\n", "\n", " ", ""] // Removed SLIDE_SEPARATOR
 });
+
+// --- Helper function to process a single file (for parallelization) ---
+async function processSingleFile(
+  file: IndexStateType['files'][0],
+  supabaseClient: SupabaseClient<any, "public", any>,
+): Promise<{ doc: Document | null; skipped: boolean; error: string | null }> {
+  const fileType = file.contentType === 'application/pdf' ? 'PDF' :
+                   file.contentType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ? 'DOCX' :
+                   file.contentType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' ? 'PPTX' : 
+                   'Document';
+  console.log(`[IngestionGraph] Starting processing for ${fileType} file: ${file.filename}`);
+  
+  try {
+    // --- Duplicate Check --- 
+    console.log(`[IngestionGraph] Checking for duplicates: ${file.filename}`);
+    const { data: existingDocs, error: checkError } = await supabaseClient
+      .from('documents')
+      .select('id')
+      .ilike('metadata->>source', file.filename)
+      .limit(1);
+
+    if (checkError) {
+      console.error(`[IngestionGraph] Error checking duplicates for ${file.filename}:`, checkError);
+      // Return error for this file
+      return { doc: null, skipped: false, error: `Error checking duplicates: ${checkError.message}` }; 
+    } else if (existingDocs && existingDocs.length > 0) {
+      console.warn(`[IngestionGraph] Duplicate detected: ${file.filename}. Skipping.`);
+      return { doc: null, skipped: true, error: null }; // Mark as skipped
+    }
+    // --- End Duplicate Check ---
+
+    console.log(`[IngestionGraph] No duplicate found for ${file.filename}. Proceeding with parsing.`);
+    const buffer = Buffer.from(file.contentBase64, 'base64');
+    const baseMetadata = {
+      source: file.filename,
+      contentType: file.contentType,
+      fileSize: buffer.length,
+      parsedAt: new Date().toISOString(),
+    };
+
+    // --- Parsing Logic --- 
+    if (file.contentType === 'application/pdf') {
+      const data = await pdf(buffer); // Assume await works here
+      if (data.text.trim()) {
+        return { doc: new Document({ pageContent: data.text, metadata: baseMetadata }), skipped: false, error: null };
+      } else {
+        console.warn(`[IngestionGraph] Parsed PDF content is empty: ${file.filename}`);
+        return { doc: null, skipped: true, error: 'Parsed PDF content is empty' }; // Skip empty parsed content
+      }
+    } else if (file.contentType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+      const { value } = await mammoth.extractRawText({ buffer });
+      if (value.trim()) {
+        return { doc: new Document({ pageContent: value, metadata: baseMetadata }), skipped: false, error: null };
+      } else {
+        console.warn(`[IngestionGraph] Parsed DOCX content is empty: ${file.filename}`);
+        return { doc: null, skipped: true, error: 'Parsed DOCX content is empty' }; // Skip empty
+      }
+    } else if (file.contentType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') {
+      if (buffer.length > MAX_PPTX_SIZE) {
+        console.error(`[IngestionGraph] PPTX file exceeds max size: ${file.filename}`);
+        return { doc: null, skipped: true, error: `Exceeds max PPTX size (${MAX_PPTX_SIZE / 1024 / 1024}MB)` };
+      }
+      // Using officeParser directly here instead of separate processPowerPoint for simplicity in parallel func
+      // NOTE: This brings the pptxSplitter logic dependency here
+      const pptxContent = await officeParser.parseOfficeAsync(buffer);
+      if (pptxContent.trim()) {
+         // We get raw text here, need to handle potential chunking later if needed
+         // For now, return one large doc per PPTX
+         return { doc: new Document({ pageContent: pptxContent, metadata: { ...baseMetadata, documentType: 'pptx' } }), skipped: false, error: null };
+      } else {
+          console.warn(`[IngestionGraph] Parsed PPTX content is empty: ${file.filename}`);
+          return { doc: null, skipped: true, error: 'Parsed PPTX content is empty' }; // Skip empty
+      }
+      
+    } else {
+      console.warn(`[IngestionGraph] Unsupported content type: ${file.contentType} for file ${file.filename}. Skipping.`);
+      return { doc: null, skipped: true, error: `Unsupported content type: ${file.contentType}` }; // Skip unsupported
+    }
+  } catch (error: any) {
+    console.error(`[IngestionGraph] Error processing file ${file.filename}:`, error);
+    return { doc: null, skipped: false, error: error.message || 'Unknown processing error' }; // Return error
+  }
+}
 
 /**
  * Node: Processes uploaded files, checks for duplicates, parses content, and prepares docs.
@@ -47,7 +131,7 @@ async function processFiles(
   state: IndexStateType,
   _config?: RunnableConfig,
 ): Promise<Partial<IndexStateType>> {
-  console.log('[IngestionGraph] Starting processFiles node...');
+  console.log('[IngestionGraph] Starting processFiles node (parallel version)...');
   if (!state.files || state.files.length === 0) {
     console.warn('[IngestionGraph] No files provided to processFiles node.');
     // No files to process, but not necessarily an error state yet.
@@ -64,15 +148,17 @@ async function processFiles(
     };
   }
 
-  // Initialize state tracking for progress 
+  // Initialize state tracking
   let currentState: Partial<IndexStateType> = {
     processingStep: 'processFiles',
     totalFiles: state.files.length,
-    processedFiles: 0,
-    currentFile: null
+    processedFiles: 0, // Will be updated after Promise.allSettled
+    currentFile: null, // Less relevant with parallel processing
+    skippedFilenames: [...(state.skippedFilenames || [])], // Preserve existing skipped files
+    error: state.error, // Preserve existing error
   };
 
-  // Initialize Supabase client for duplicate check
+  // Initialize Supabase client 
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     console.error('[IngestionGraph] Supabase credentials not found for duplicate check.');
     return { 
@@ -83,350 +169,202 @@ async function processFiles(
       skippedFilenames: [] 
     };
   }
-  
   const supabaseClient = createClient(
     process.env.SUPABASE_URL ?? '',
     process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
     { auth: { persistSession: false } }
   );
 
-  console.log(`[IngestionGraph] Processing ${state.files.length} files...`);
+  console.log(`[IngestionGraph] Processing ${state.files.length} files in parallel...`);
   const docsForChunking: Document[] = [];
-  let processingError: string | null = null;
+  const processingErrors: string[] = currentState.error ? [currentState.error] : []; // Collect errors
   const filesSkippedThisNode: string[] = [];
 
-  for (const file of state.files) {
-    // Update current file for progress tracking with file type information
-    currentState.currentFile = file.filename;
-    // Extract file type from filename or content type
-    const fileType = file.contentType === 'application/pdf' ? 'PDF' :
-                     file.contentType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ? 'DOCX' :
-                     file.contentType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' ? 'PPTX' : 
-                     'Document';
-    
-    console.log(`[IngestionGraph] Processing ${fileType} file ${currentState.processedFiles! + 1}/${currentState.totalFiles}: ${file.filename}`);
-    
-    // For different document types, adjust processing expectations
-    if (file.contentType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') {
-      console.log(`[IngestionGraph] PowerPoint detected, using specialized processing`);
-    }
-    
-    console.log(`[IngestionGraph] Checking for duplicates: ${file.filename}`);
-    try {
-      // --- Duplicate Check --- 
-      const { data: existingDocs, error: checkError } = await supabaseClient
-        .from('documents')
-        .select('id') // Only need to check existence
-        .ilike('metadata->>source', file.filename)
-        .limit(1);
+  // --- Create promises for each file processing task (Suggestion 1-B) ---
+  const fileProcessingPromises = state.files.map(file => 
+    processSingleFile(file, supabaseClient)
+  );
 
-      if (checkError) {
-        console.error(`[IngestionGraph] Error checking for duplicates for ${file.filename}:`, checkError);
-        // Decide how to handle check errors - skip or proceed cautiously?
-        // For now, let's proceed but log the error.
-        if (!processingError) processingError = `Error checking duplicates for ${file.filename}`; 
-      } else if (existingDocs && existingDocs.length > 0) {
-        console.warn(`[IngestionGraph] Duplicate detected: ${file.filename} already exists. Skipping.`);
-        filesSkippedThisNode.push(file.filename); // Add to list for this node's return
-        continue; // Skip to the next file
-      }
-      // --- End Duplicate Check ---
-      
-      console.log(`[IngestionGraph] No duplicate found for ${file.filename}. Proceeding with processing.`);
-      const buffer = Buffer.from(file.contentBase64, 'base64');
-      const baseMetadata = {
-        source: file.filename,
-        contentType: file.contentType,
-        fileSize: buffer.length,
-        parsedAt: new Date().toISOString(),
-      };
+  // --- Execute promises in parallel --- 
+  const results = await Promise.allSettled(fileProcessingPromises);
 
-      console.log(`[IngestionGraph] Parsing file: ${file.filename}`);
-      try { // Wrap parsing logic in try-catch
-        if (file.contentType === 'application/pdf') {
-          const data = await pdf(buffer);
-          if (data.text.trim()) {
-              docsForChunking.push(new Document({ pageContent: data.text, metadata: baseMetadata }));
-          } else {
-              console.warn(`[IngestionGraph] Parsed PDF content is empty: ${file.filename}`);
-          }
-        } else if (file.contentType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-          const { value } = await mammoth.extractRawText({ buffer });
-          if (value.trim()) {
-              docsForChunking.push(new Document({ pageContent: value, metadata: baseMetadata }));
-          } else {
-               console.warn(`[IngestionGraph] Parsed DOCX content is empty: ${file.filename}`);
-          }
-        } else if (file.contentType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') {
-          console.log(`[IngestionGraph] Processing PPTX file: ${file.filename} (${(buffer.length / 1024 / 1024).toFixed(2)}MB)`);
-          
-          // Check if file size exceeds the special PowerPoint limit
-          if (buffer.length > MAX_PPTX_SIZE) {
-            console.error(`[IngestionGraph] PPTX file exceeds maximum size (100MB): ${file.filename}`);
-            if (!processingError) processingError = `File ${file.filename} exceeds maximum PowerPoint size (100MB)`;
-            filesSkippedThisNode.push(file.filename);
-            continue;
-          }
-          
-          try {
-            // Use the specialized PowerPoint processor
-            const pptxDocs = await processPowerPoint(buffer, baseMetadata);
-            
-            if (pptxDocs.length > 0) {
-              // Add the PowerPoint chunks to the main docs array
-              docsForChunking.push(...pptxDocs);
-              console.log(`[IngestionGraph] Added ${pptxDocs.length} PowerPoint chunks for ${file.filename}`);
-            } else {
-              console.warn(`[IngestionGraph] No content extracted from PowerPoint: ${file.filename}`);
-            }
-          } catch (pptxError: any) {
-            console.error(`[IngestionGraph] Error processing PPTX ${file.filename}:`, pptxError);
-            if (!processingError) processingError = `Failed to process PPTX ${file.filename}: ${pptxError.message}`;
-            continue;
-          }
-        } else {
-          console.warn(`[IngestionGraph] Unsupported content type: ${file.contentType} for file ${file.filename}. Skipping.`);
-          // Skip unsupported types (don't add to error unless needed)
-          continue; 
+  // --- Process results --- 
+  results.forEach((result, index) => {
+    const originalFile = state.files[index]; // Get corresponding file info
+    currentState.processedFiles!++; // Increment processed count regardless of outcome
+    
+    if (result.status === 'fulfilled') {
+      const { doc, skipped, error } = result.value;
+      if (error) {
+        // Handle errors reported by processSingleFile (e.g., parsing, duplicate check error)
+        console.error(`[IngestionGraph] Error processing ${originalFile.filename}: ${error}`);
+        processingErrors.push(`${originalFile.filename}: ${error}`);
+        if (skipped) { // Also mark as skipped if the error led to skipping
+           filesSkippedThisNode.push(originalFile.filename);
         }
-      } catch (parseError: any) {
-          console.error(`[IngestionGraph] Error parsing ${file.filename} (type: ${file.contentType}):`, parseError);
-          if (!processingError) processingError = `Failed to parse ${file.filename}: ${parseError.message}`;
-          // Continue to next file even if one fails parsing
-          continue;
+      } else if (skipped) {
+        // Handle files explicitly skipped (duplicate, empty, unsupported)
+        console.warn(`[IngestionGraph] File skipped: ${originalFile.filename}`);
+        filesSkippedThisNode.push(originalFile.filename);
+      } else if (doc) {
+        // Successfully processed document
+        console.log(`[IngestionGraph] Successfully processed: ${originalFile.filename}`);
+        docsForChunking.push(doc);
       }
-    } catch (outerError: any) {
-      console.error(`[IngestionGraph] Outer error processing ${file.filename}:`, outerError);
-      if (!processingError) processingError = `Error processing ${file.filename}: ${outerError.message}`;
-      continue;
-    } finally {
-      // Update processed count after each file
-      currentState.processedFiles = (currentState.processedFiles || 0) + 1;
+    } else { // result.status === 'rejected'
+      // Handle unexpected errors during processSingleFile execution itself
+      console.error(`[IngestionGraph] Unexpected rejection processing ${originalFile.filename}:`, result.reason);
+      processingErrors.push(`${originalFile.filename}: Unexpected error - ${result.reason?.message || result.reason}`);
     }
-  }
-
-  // Check if ANY documents were generated for chunking
-  if (docsForChunking.length === 0) {
-    if (filesSkippedThisNode.length === state.files.length) {
-      // All files were skipped (likely duplicates)
-      console.warn('[IngestionGraph] All input files were skipped.');
-      return {
-        ...currentState,
-        docs: [],
-        error: processingError, // Keep any check errors
-        finalStatus: 'CompletedWithSkips',
-        skippedFilenames: filesSkippedThisNode, // Pass skipped filenames
-      };
-    } else {
-      // No docs parsed, and not all were skipped -> likely parsing errors or empty files
-      console.error('[IngestionGraph] No documents successfully parsed.');
-      return {
-        ...currentState,
-        docs: [],
-        error: processingError ?? 'No documents could be successfully parsed.', 
-        finalStatus: 'Failed', // Set final status to Failed
-        skippedFilenames: filesSkippedThisNode, 
-      };
-    }
-  }
+  });
   
-  // Proceed to chunking
-  try {
-    console.log(`[IngestionGraph] Chunking ${docsForChunking.length} documents/slides...`);
-    const chunkedDocs = await defaultSplitter.splitDocuments(docsForChunking);
-    console.log(`[IngestionGraph] Created ${chunkedDocs.length} chunks.`);
-    
-    const enhancedChunks = chunkedDocs.map((doc, index) => {
-      return new Document({
-        pageContent: doc.pageContent,
-        metadata: {
-          ...doc.metadata,
-          chunkIndex: index, 
-          totalChunks: chunkedDocs.length, 
-          // Remove specific PPTX metadata if no longer relevant
-          // slideNumber: doc.metadata.slideNumber, 
-          // isFullPresentation: false
-        }
-      });
-    });
-    
-    console.log(`[IngestionGraph] Enhanced ${enhancedChunks.length} chunks with metadata.`);
-    // Determine final status based on whether errors occurred or files were skipped
-     const finalStatus = processingError ? 'CompletedWithErrors' : (filesSkippedThisNode.length > 0 ? 'CompletedWithSkips' : 'CompletedSuccess');
+  console.log(`[IngestionGraph] Parallel processing finished. Processed: ${currentState.processedFiles}. Successful docs: ${docsForChunking.length}. Skipped: ${filesSkippedThisNode.length}. Errors: ${processingErrors.length}`);
+
+  // Combine skipped files from this node with previous ones
+  const allSkippedFiles = Array.from(new Set([...(state.skippedFilenames || []), ...filesSkippedThisNode]));
+
+  // Update state with results
      return {
-      ...currentState,
-      docs: enhancedChunks, 
-      error: processingError, 
-      finalStatus: finalStatus,
-      skippedFilenames: filesSkippedThisNode,
-      // Clear large base64 content from state after processing
-      files: state.files.map(file => ({
-        filename: file.filename,
-        contentType: file.contentType,
-        contentBase64: '' // Clear the base64 content to reduce state size
-      }))
-    };
-  } catch (chunkingError: any) {
-     console.error('[IngestionGraph] Error chunking documents:', chunkingError);
-     const combinedError = processingError ? `${processingError}. Chunking failed: ${chunkingError.message}` : `Chunking failed: ${chunkingError.message}`;
-     return {
-       ...currentState,
-       docs: [], 
-       error: combinedError, 
-       finalStatus: 'Failed', 
-       skippedFilenames: filesSkippedThisNode,
-       // Clear large base64 content from state even on error
-       files: state.files.map(file => ({
-         filename: file.filename,
-         contentType: file.contentType,
-         contentBase64: '' // Clear the base64 content to reduce state size
-       }))
-     };
-  }
+    ...currentState, // Keep totalFiles, processedFiles updates
+    docs: docsForChunking,
+    skippedFilenames: allSkippedFiles,
+    error: processingErrors.length > 0 ? processingErrors.join('; \n') : null, // Combine errors
+    finalStatus: processingErrors.length > 0 ? 'Failed' : state.finalStatus // Mark as failed if any errors occurred
+    // Note: finalStatus might be further updated by later nodes
+  };
 }
 
 /**
- * Node: Embeds and stores document chunks and full docs from the state.
+ * Node: Embeds and stores document chunks.
+ * Previously named ingestDocs, but now also handles chunking.
  */
-async function ingestDocs(
+async function chunkAndEmbedDocs(
   state: IndexStateType,
   config?: RunnableConfig,
 ): Promise<Partial<IndexStateType>> {
-  const docsToEmbed = state.docs ?? [];
+  const docsToChunk = state.docs ?? []; // Renamed for clarity
   const skippedFiles = state.skippedFilenames ?? [];
   let currentError = state.error ?? null;
   
-  // Update processing step for progress tracking
+  // Update processing step
   const progressState: Partial<IndexStateType> = {
-    processingStep: 'ingestDocs',
-    currentFile: null, // No specific file in this step
-    // Maintain existing progress counts
+    processingStep: 'chunkAndEmbedDocs', // Updated step name
+    currentFile: null, 
     totalFiles: state.totalFiles || 0,
     processedFiles: state.processedFiles || 0
   };
   
-  // Inherit finalStatus if already set to Failed by processFiles
   let finalStatus = state.finalStatus === 'Failed' ? 'Failed' : 'InProgress'; 
   
-  console.log(`[IngestionGraph] ingestDocs received ${docsToEmbed.length} docs. Skipped: ${skippedFiles.length}. Error: ${currentError}. Status: ${finalStatus}`);
+  console.log(`[IngestionGraph] chunkAndEmbedDocs received ${docsToChunk.length} docs. Skipped: ${skippedFiles.length}. Error: ${currentError}. Status: ${finalStatus}`);
 
   if (finalStatus === 'Failed') {
-      // If processFiles already determined failure, just pass it through
-      return { 
-        ...progressState,
-        docs: [], 
-        error: currentError, 
-        finalStatus: 'Failed', 
-        skippedFilenames: skippedFiles 
-      };
+      return { /* ... return failed state ... */ };
   }
 
   if (!config) {
-    console.error('[IngestionGraph] Configuration required to run ingestDocs.');
-    return { 
-      ...progressState,
-      docs: [], 
-      error: currentError ?? 'Configuration missing', 
-      finalStatus: 'Failed', 
-      skippedFilenames: skippedFiles 
-    };
+      return { /* ... return missing config state ... */ };
   }
 
-  // Filter out any potential empty documents (should be less likely now)
-  const validDocs = docsToEmbed.filter(
+  // Filter out any potential empty documents 
+  const validDocs = docsToChunk.filter(
     (doc) => doc.pageContent && doc.pageContent.trim() !== ''
   );
-  console.log(`[IngestionGraph] Valid docs for embedding: ${validDocs.length}/${docsToEmbed.length}`);
+  console.log(`[IngestionGraph] Valid docs for chunking: ${validDocs.length}/${docsToChunk.length}`);
 
   if (validDocs.length === 0) {
-    console.warn('[IngestionGraph] No valid document content to embed.');
+    // Determine status if no valid docs
     if (skippedFiles.length > 0) {
       finalStatus = 'CompletedWithSkips';
     } else if (currentError) {
-       // Should have been caught by initial status check, but as a fallback
       finalStatus = 'Failed';
     } else {
       finalStatus = 'CompletedNoNewDocs';
     }
-    return { docs: [], error: currentError, finalStatus: finalStatus, skippedFilenames: skippedFiles };
+    return { docs: [], error: currentError, finalStatus: finalStatus, skippedFilenames: skippedFiles, ...progressState, files: state.files };
   }
 
-  // Proceed with embedding valid documents
+  // --- Chunking Logic --- 
+  let allChunks: Document[] = [];
   try {
-    const retriever = await makeRetriever(config);
-    await retriever.addDocuments(validDocs);
-    console.log(`[IngestionGraph] Successfully added ${validDocs.length} documents (chunks/full) to vector store.`);
-    
-    finalStatus = skippedFiles.length > 0 ? 'CompletedWithSkips' : 'CompletedSuccess';
-    currentError = null; // Clear error on success
-    
-  } catch (error: any) {
-    console.error('[IngestionGraph] Error adding documents to vector store:', error);
-    currentError = currentError ? `${currentError}. Vector store error: ${error.message}` : `Vector store error: ${error.message}`;
-    finalStatus = 'Failed'; 
-  } finally {
-     return { 
-        ...progressState,
-        docs: [], // Clear docs state
-        error: currentError, 
-        finalStatus: finalStatus, 
-        skippedFilenames: skippedFiles,
-        // Ensure emptied files state is preserved through the graph
-        files: state.files
-      };
-  }
-}
+    console.log('[IngestionGraph] Starting document chunking...');
+    // Separate docs based on type for specific splitters
+    const pptxDocs = validDocs.filter(doc => doc.metadata?.documentType === 'pptx');
+    const otherDocs = validDocs.filter(doc => doc.metadata?.documentType !== 'pptx');
 
-/**
- * Processes a PowerPoint file into individual slide chunks for better handling
- * @param buffer The file buffer
- * @param metadata Base metadata for the document
- * @returns Array of Document objects, one per slide
- */
-async function processPowerPoint(buffer: Buffer, metadata: Record<string, any>): Promise<Document[]> {
-  console.log(`[IngestionGraph] Processing PowerPoint with size: ${(buffer.length / 1024 / 1024).toFixed(2)}MB`);
-  
-  try {
-    // Parse the PowerPoint content
-    const parsedText = await officeParser.parseOfficeAsync(buffer);
-    
-    if (!parsedText.trim()) {
-      console.warn(`[IngestionGraph] Parsed PPTX content is empty: ${metadata.source}`);
-      return [];
+    let pptxChunks: Document[] = [];
+    if (pptxDocs.length > 0) {
+        console.log(`[IngestionGraph] Chunking ${pptxDocs.length} PPTX documents with pptxSplitter...`);
+        pptxChunks = await pptxSplitter.splitDocuments(pptxDocs);
+        console.log(`[IngestionGraph] Created ${pptxChunks.length} PPTX chunks.`);
+    }
+
+    let otherChunks: Document[] = [];
+    if (otherDocs.length > 0) {
+        console.log(`[IngestionGraph] Chunking ${otherDocs.length} other documents with defaultSplitter...`);
+        otherChunks = await defaultSplitter.splitDocuments(otherDocs);
+        console.log(`[IngestionGraph] Created ${otherChunks.length} other chunks.`);
     }
     
-    // Option 1: Process as a single document with special PowerPoint splitter
-    const singleDoc = new Document({ 
-      pageContent: parsedText,
-      metadata: {
-        ...metadata,
-        documentType: 'pptx',
-        isPowerPoint: true
-      }
-    });
-    
-    // Use the specialized PowerPoint splitter to create chunks
-    const chunks = await pptxSplitter.splitDocuments([singleDoc]);
-    console.log(`[IngestionGraph] Split PowerPoint into ${chunks.length} chunks`);
-    
-    // Enhance each chunk with additional PowerPoint metadata
-    return chunks.map((chunk, index) => {
-      return new Document({
-        pageContent: chunk.pageContent,
-        metadata: {
-          ...chunk.metadata,
-          chunkIndex: index,
-          totalChunks: chunks.length,
-          isPptxChunk: true,
-          // Try to determine slide number from content
-          slideEstimate: estimateSlideNumber(chunk.pageContent, index)
-        }
-      });
-    });
-  } catch (error) {
-    console.error(`[IngestionGraph] Error processing PowerPoint: ${error}`);
-    throw error;
+    allChunks = [...pptxChunks, ...otherChunks];
+    console.log(`[IngestionGraph] Total chunks created: ${allChunks.length}`);
+
+    if (allChunks.length === 0) {
+      console.warn('[IngestionGraph] Chunking resulted in zero chunks.');
+      // No chunks means we can't proceed to embedding
+      finalStatus = 'Failed'; // Treat as failure if valid docs existed but chunking yielded nothing
+      currentError = currentError ? `${currentError}. Chunking produced no results.` : 'Chunking produced no results.';
+    } else {
+        // Enhance chunks with index metadata 
+        allChunks = allChunks.map((doc, index) => new Document({
+            pageContent: doc.pageContent,
+            metadata: {
+                ...doc.metadata,
+                chunkIndex: index, 
+            }
+        }));
+        console.log(`[IngestionGraph] Enhanced ${allChunks.length} chunks with metadata.`);
+    }
+
+  } catch (chunkingError: any) {
+     console.error('[IngestionGraph] Error during document chunking:', chunkingError);
+     currentError = currentError ? `${currentError}. Chunking failed: ${chunkingError.message}` : `Chunking failed: ${chunkingError.message}`;
+     finalStatus = 'Failed'; 
+     allChunks = []; // Prevent embedding attempt
   }
+  // --- End Chunking --- 
+
+  // --- Embedding Logic --- 
+  if (finalStatus !== 'Failed' && allChunks.length > 0) {
+      try {
+        console.log(`[IngestionGraph] Embedding ${allChunks.length} chunks...`);
+        const retriever = await makeRetriever(config);
+        await retriever.addDocuments(allChunks); 
+        console.log(`[IngestionGraph] Successfully added ${allChunks.length} chunks to vector store.`);
+        
+        // Determine final success status only if embedding succeeded
+        finalStatus = skippedFiles.length > 0 ? 'CompletedWithSkips' : 'CompletedSuccess';
+        currentError = null; // Clear error only on full success
+        
+      } catch (embeddingError: any) {
+        console.error('[IngestionGraph] Error adding documents to vector store:', embeddingError);
+        currentError = currentError ? `${currentError}. Vector store error: ${embeddingError.message}` : `Vector store error: ${embeddingError.message}`;
+        finalStatus = 'Failed'; 
+      }
+  } else {
+      console.log(`[IngestionGraph] Skipping embedding due to status: ${finalStatus} or 0 chunks.`);
+      // If chunking failed or yielded no chunks, retain that status/error
+  }
+
+  // --- Return Final State --- 
+  return { 
+      ...progressState,
+      docs: [], // Always clear docs after this node
+      error: currentError, 
+      finalStatus: finalStatus, // Reflect outcome of chunking & embedding
+      skippedFilenames: skippedFiles,
+      files: state.files // Preserve emptied files state 
+  };
 }
 
 /**
@@ -450,19 +388,19 @@ console.log("Defining Simple LangGraph Ingestion Graph...");
 // Use the standard constructor with the Annotation object
 const builder = new StateGraph(IndexStateAnnotation);
 
-// Add the nodes
+// Add the nodes (using updated function name)
 builder.addNode('processFiles', processFiles);
-builder.addNode('ingestDocs', ingestDocs);
+builder.addNode('chunkAndEmbedDocs', chunkAndEmbedDocs);
 
 // Set the entry point to the first node after START
 builder.setEntryPoint('processFiles' as any);
 
 // Define edges - START implicitly connects to the entry point
 // builder.addEdge(START as any, 'processFiles' as any); // Remove this redundant edge
-builder.addEdge('processFiles' as any, 'ingestDocs' as any);
-builder.addEdge('ingestDocs' as any, END as any);
+builder.addEdge('processFiles' as any, 'chunkAndEmbedDocs' as any);
+builder.addEdge('chunkAndEmbedDocs' as any, END as any);
 
 // Compile the graph
 export const graph = builder.compile().withConfig({ runName: 'IngestionGraph' });
 
-console.log("Simple LangGraph Ingestion Graph defined.");
+console.log("Simple LangGraph Ingestion Graph defined with updated chunking logic.");

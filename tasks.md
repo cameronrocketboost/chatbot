@@ -461,3 +461,27 @@ After reviewing the codebase, there are several issues with the document retriev
    * [ ] Add proper indexing for the `parsedAt`
 
 *   [ ] Update `ChatInterface` (frontend) to parse code-2 stream events and display stage messages (e.g., message_saved, history_fetched, executing_graph, finalizing) for improved UX during streaming.
+
+# Ingestion Graph Improvements (Backend)
+
+*   **Security & Dependencies (High Priority):**
+    *   [ ] **Replace `officeparser`:** Investigate and replace `officeparser` with `pptx2json` or a LibreOffice-headless pipeline due to historical CVEs. (Suggestion #2)
+    *   [ ] **Service Role Key Exposure:** Review Next.js API route imports to ensure the Supabase service key is not bundled client-side. Consider an internal RPC layer if needed. (Suggestion #2)
+*   **Memory & Performance (High Priority):**
+    *   [ ] **Fix Buffer Life-cycle/State Bloat:** Modify `processSingleFile` or `processFiles` to clear `contentBase64` from state immediately after parsing/use. (Suggestion 1-A, 3-B)
+    *   [ ] **Use Worker Threads for PDF Parsing:** Offload synchronous `pdf-parse` work to worker threads to avoid blocking the event loop. (Suggestion 1-B)
+    *   [ ] **Improve Supabase Duplicate Check:** Implement a functional index on `lower((metadata->>'source'))` or use file hashes for faster duplicate checks instead of `ilike`. (Suggestion 1-D)
+*   **Correctness & Tuning (Medium Priority):**
+    *   [ ] **Tune PPTX Chunk Size:** Evaluate increasing `chunkSize` for `pptxSplitter` (e.g., to 4k+) for potentially better retrieval with long-context models. (Suggestion 1-C)
+*   **Graph Semantics & Error Flow (Medium Priority):**
+    *   [ ] **Refine `finalStatus` Logic:** Implement a stricter enum for `finalStatus` and freeze the state upon reaching a terminal status in nodes like `processFiles`. (Suggestion 3-A)
+    *   [ ] **Short-circuit on All Skipped:** Modify `processFiles` to conditionally transition directly to `END` if all files were skipped (e.g., duplicates), avoiding unnecessary runs of `chunkAndEmbedDocs`. (Suggestion #4)
+    *   [ ] **Decouple Graph Config:** Refactor graph compilation to avoid hardcoding `runName` and allow configuration injection at invocation time (e.g., using a factory pattern). (Suggestion 3-C)
+*   **Observability & Logging (Medium Priority):**
+    *   [ ] **Implement Structured Logging:** Integrate Pino or Winston and replace `console.log` calls with structured logging, including request/run IDs. (Suggestion #8, #5)
+    *   [ ] **Emit Custom LangGraph Events:** Use `.publish()` within graph nodes to emit custom metrics (e.g., `slide_count`, `duplicate_skipped`) for tracing. (Suggestion #5)
+*   **Code Quality & Style (Low Priority):**
+    *   [ ] Use `const enum` for node names/magic strings. (Suggestion #6)
+    *   [ ] Make `MAX_PPTX_SIZE` configurable via `RunnableConfig`. (Suggestion #6)
+    *   [ ] Use `unknown` in `catch` blocks and narrow types. (Suggestion #6)
+    *   [ ] Enforce `import type` where applicable. (Suggestion #6)
