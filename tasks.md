@@ -486,14 +486,11 @@ After reviewing the codebase, there are several issues with the document retriev
     *   [ ] Use `unknown` in `catch` blocks and narrow types. (Suggestion #6)
     *   [ ] Enforce `import type` where applicable. (Suggestion #6)
 
-## Fixes Applied (Backend - server.ts)
+## Fixes Applied (Backend - server.ts) - SSE Framing (Round 2)
 
-- Implemented backend guard in `/chat/stream` to prevent processing messages shorter than 2 characters.
-- Replaced SSE stream handling logic in `/chat/stream`:
-  - Use `res.writeHead` for SSE headers.
-  - Correctly filter and send `AIMessageChunk` and `AIMessage` updates via `res.write`.
-  - Send `data: [DONE]\n\n` message upon stream completion.
-  - Removed separate `sendSSE` calls within the loop.
-  - Stream only `messages` patches (`streamMode: ["messages"]`).
-- Updated logging within the stream patch loop to be more concise.
-- Verified `messages` reducer in `AgentStateAnnotation` (`retrieval_graph/state.ts`) was already present.
+- Further refined SSE handling in `/chat/stream` to strictly adhere to `data: <json>\n\n` framing:
+  - Added `res.flushHeaders?.()` after `writeHead`.
+  - Defined and used a `send(obj)` helper function for consistent SSE frame formatting.
+  - Updated stream loop to use `send(lastMessage)` for AIMessage chunks/messages.
+  - Updated end-of-stream signal to use `send("[DONE]")`.
+  - Updated short message guard (`length < 2`) to use the `send()` helper and signal `[DONE]` immediately.
