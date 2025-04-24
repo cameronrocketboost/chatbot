@@ -276,17 +276,9 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
 
-    // Thinking stage: user message saved
-    res.write(`2:${JSON.stringify({ stage: 'message_saved' })}\n`);
-    console.log(`[POST /chat/stream] Starting data-stream v1 for thread ${currentThreadId}...`);
-
     // --- Prepare Graph Input --- 
     const history = await getMessageHistory(currentThreadId); 
-    // Thinking stage: history fetched
-    res.write(`2:${JSON.stringify({ stage: 'history_fetched' })}\n`);
     const input = { query: userMessageContent, contextMessages: history || [] }; 
-    // Thinking stage: executing graph
-    res.write(`2:${JSON.stringify({ stage: 'executing_graph' })}\n`);
 
     // --- Stream Graph Execution --- 
     const streamResponse = langGraphClient.runs.stream(
@@ -308,25 +300,38 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
     }
     
     console.log(`[POST /chat/stream] Stream finished for thread ${currentThreadId}.`);
-    // Thinking stage: graph execution complete, finalizing
-    res.write(`2:${JSON.stringify({ stage: 'finalizing' })}\n`);
 
     // Send final structured assistant message: code 1
     const finalState: any = await langGraphClient.threads.getState(currentThreadId);
     const sources = (finalState as any)?.values?.documents ?? [];
     res.write(
-      `1:${JSON.stringify({ id: uuidv4(), role: 'assistant', content: accumulatedContent, metadata: { sources } })}\n`
+      `1:${JSON.stringify({
+        id: uuidv4(),
+        role: 'assistant',
+        content: accumulatedContent,
+        parts: [{ type: 'text', text: accumulatedContent }],
+        metadata: { sources }
+      })}\n`
     );
     res.end();
 
   } catch (error: any) {
     console.error(`[POST /chat/stream] Error during stream for thread ${currentThreadId || 'N/A'}:`, error);
-    // If protocol headers weren't sent, send an error code frame
+    // Send final error message as code 1 with proper parts array
     if (!res.headersSent) {
       res.setHeader('x-vercel-ai-data-stream', 'v1');
       res.setHeader('Content-Type', 'text/event-stream');
       res.flushHeaders();
-      res.write(`2:${JSON.stringify({ error: error.message || 'Unknown error' })}\n`);
+      const errorContent = `Error: ${error.message}`;
+      res.write(
+        `1:${JSON.stringify({
+          id: uuidv4(),
+          role: 'assistant',
+          content: errorContent,
+          parts: [{ type: 'text', text: errorContent }],
+          metadata: { sources: [] }
+        })}\n`
+      );
     }
     res.end();
   }
