@@ -39,10 +39,21 @@ if (!process.env.OPENAI_API_KEY) {
   // throw new Error("Missing critical environment variable: OPENAI_API_KEY");
 }
 
-// Initialize the client once for the server instance
-// The SDK client doesn't need the LangGraph API URL; it interacts directly if configured
-// It *does* need credentials for underlying services (like OpenAI API key)
-const langGraphClient = new LangGraphClient(); // Base client
+// Initialize the LangGraph SDK client with explicit API URL and API key
+const langGraphApiUrl = process.env.LANGGRAPH_API_URL;
+if (!langGraphApiUrl) {
+  throw new Error('Missing LANGGRAPH_API_URL environment variable');
+}
+if (!process.env.LANGCHAIN_API_KEY) {
+  throw new Error('Missing LANGCHAIN_API_KEY environment variable');
+}
+const langGraphClient = new LangGraphClient({
+  apiUrl: langGraphApiUrl,
+  defaultHeaders: {
+    'Content-Type': 'application/json',
+    'X-Api-Key': process.env.LANGCHAIN_API_KEY,
+  },
+});
 
 // --- Helper Function to get or create conversation ID --- 
 async function getOrCreateConversationId(threadId: string): Promise<string | null> {
@@ -274,6 +285,10 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
+    // Recommended headers to disable buffering
+    res.setHeader('Transfer-Encoding', 'chunked');
+    res.setHeader('Content-Encoding', 'none');
+    res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
 
     // --- Prepare Graph Input --- 
@@ -317,22 +332,20 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
 
   } catch (error: any) {
     console.error(`[POST /chat/stream] Error during stream for thread ${currentThreadId || 'N/A'}:`, error);
-    // Send final error message as code 1 with proper parts array
-    if (!res.headersSent) {
-      res.setHeader('x-vercel-ai-data-stream', 'v1');
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.flushHeaders();
-      const errorContent = `Error: ${error.message}`;
-      res.write(
-        `1:${JSON.stringify({
-          id: uuidv4(),
-          role: 'assistant',
-          content: errorContent,
-          parts: [{ type: 'text', text: errorContent }],
-          metadata: { sources: [] }
-        })}\n`
-      );
-    }
+    // Always send a final error event as code 1
+    res.setHeader('x-vercel-ai-data-stream', 'v1');
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.flushHeaders();
+    const errorContent = `Error: ${error.message}`;
+    res.write(
+      `1:${JSON.stringify({
+        id: uuidv4(),
+        role: 'assistant',
+        content: errorContent,
+        parts: [{ type: 'text', text: errorContent }],
+        metadata: { sources: [] }
+      })}\n`
+    );
     res.end();
   }
 });
