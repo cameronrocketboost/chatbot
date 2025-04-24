@@ -224,6 +224,17 @@ app.get('/', (_req: express.Request, res: express.Response) => { // Add types
   res.send('LangGraph Backend is running!');
 });
 
+// Endpoint to create a new chat thread
+app.post('/chat/threads', async (_req: express.Request, res: express.Response) => {
+  try {
+    const newThread = await langGraphClient.threads.create();
+    res.json({ threadId: newThread.thread_id });
+  } catch (error: any) {
+    console.error('[POST /chat/threads] Error creating new thread:', error);
+    res.status(500).json({ error: error.message || 'Failed to create thread' });
+  }
+});
+
 // --- New SSE Chat Streaming Endpoint --- 
 app.post('/chat/stream', async (req: express.Request, res: express.Response): Promise<void> => {
   console.log("[POST /chat/stream] Request received.");
