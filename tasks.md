@@ -485,3 +485,15 @@ After reviewing the codebase, there are several issues with the document retriev
     *   [ ] Make `MAX_PPTX_SIZE` configurable via `RunnableConfig`. (Suggestion #6)
     *   [ ] Use `unknown` in `catch` blocks and narrow types. (Suggestion #6)
     *   [ ] Enforce `import type` where applicable. (Suggestion #6)
+
+## Fixes Applied (Backend - server.ts)
+
+- Implemented backend guard in `/chat/stream` to prevent processing messages shorter than 2 characters.
+- Replaced SSE stream handling logic in `/chat/stream`:
+  - Use `res.writeHead` for SSE headers.
+  - Correctly filter and send `AIMessageChunk` and `AIMessage` updates via `res.write`.
+  - Send `data: [DONE]\n\n` message upon stream completion.
+  - Removed separate `sendSSE` calls within the loop.
+  - Stream only `messages` patches (`streamMode: ["messages"]`).
+- Updated logging within the stream patch loop to be more concise.
+- Verified `messages` reducer in `AgentStateAnnotation` (`retrieval_graph/state.ts`) was already present.
