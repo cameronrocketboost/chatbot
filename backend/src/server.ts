@@ -228,47 +228,47 @@ app.get('/', (_req: express.Request, res: express.Response) => { // Add types
 app.post('/chat/stream', async (req: express.Request, res: express.Response): Promise<void> => {
   console.log("[POST /chat/stream] Request received.");
 
-  // --- Extract data from Vercel AI SDK request body --- 
-  // The hook sends the history in `messages` and the threadId in `body.threadId`
+  // Extract Vercel AI SDK request body
   const requestBody = req.body as { messages?: { role: string; content: string }[], threadId?: string };
   const messages = requestBody?.messages ?? [];
   const currentThreadIdFromRequest = requestBody?.threadId;
 
-  // Get the actual user query from the last message in the array
+  // Get the user message from the last entry
   const userMessageContent = messages.length > 0 ? messages[messages.length - 1].content : null;
 
+  // Validate user message
   if (!userMessageContent) {
-    console.warn("[POST /chat/stream] No message content found in request body messages array.", req.body);
-    res.status(400).json({ error: 'Message content not found in messages array' });
+    console.warn("[POST /chat/stream] Missing message content.", req.body);
+    res.status(400).json({ error: 'Message content is required' });
     return;
   }
   
   const assistantId = "retrieval_graph"; 
 
-  let currentThreadId = currentThreadIdFromRequest; // Use the threadId passed from the frontend
+  let currentThreadId = currentThreadIdFromRequest; // Use threadId from client
 
   try {
-    // Require a valid threadId
+    // Validate threadId
     if (!currentThreadId) {
-      console.warn("[POST /chat/stream] threadId missing in request body.");
-      res.status(400).json({ error: 'threadId is required in request body' });
+      console.warn("[POST /chat/stream] threadId missing.");
+      res.status(400).json({ error: 'threadId is required' });
       return;
     }
+
     // Save the user message for this thread
     await addMessageToConversation(currentThreadId, { role: 'user', content: userMessageContent });
 
-    // --- Set SSE Headers --- 
+    // --- Set headers for data-stream v1 protocol ---
     res.setHeader('x-vercel-ai-data-stream', 'v1');
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders(); // Send headers immediately
+    res.flushHeaders();
 
     console.log(`[POST /chat/stream] Starting data-stream v1 for thread ${currentThreadId}...`);
 
     // --- Prepare Graph Input --- 
     const history = await getMessageHistory(currentThreadId); 
-    // Pass the user query and fetched history to the graph
     const input = { query: userMessageContent, contextMessages: history || [] }; 
 
     // --- Stream Graph Execution --- 
@@ -285,41 +285,31 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
       if (streamChunk.event === 'on_llm_stream' && typeof streamChunk.data?.chunk === 'string') {
         const token = streamChunk.data.chunk;
         accumulatedContent += token;
-        // Send partial token with v1 protocol
+        // Partial update: code 0
         res.write(`0:${JSON.stringify(token)}\n`);
       }
     }
     
     console.log(`[POST /chat/stream] Stream finished for thread ${currentThreadId}.`);
 
-    // Send final structured assistant message
+    // Send final structured assistant message: code 1
     const finalState: any = await langGraphClient.threads.getState(currentThreadId);
-    const sources = finalState?.values?.documents ?? [];
-    res.write(`1:${JSON.stringify({
-      id: uuidv4(),
-      role: 'assistant',
-      content: accumulatedContent,
-      metadata: { sources }
-    })}\n`);
+    const sources = (finalState as any)?.values?.documents ?? [];
+    res.write(
+      `1:${JSON.stringify({ id: uuidv4(), role: 'assistant', content: accumulatedContent, metadata: { sources } })}\n`
+    );
     res.end();
 
   } catch (error: any) {
-     // --- Error Handling --- 
-    const errorThreadId = currentThreadId || 'N/A'; 
-    console.error(`[POST /chat/stream] Error during stream for thread ${errorThreadId}:`, error);
-    try {
-      if (!res.headersSent) {
-         res.status(500).json({ error: "Failed to process chat stream", details: error.message });
-         return;
-      } else {
-        // Attempt to send an error event over SSE
-        res.write(`event: error\ndata: ${JSON.stringify({ message: error.message || 'Unknown stream error' })}\n\n`);
-        res.end();
-      }
-    } catch (finalError) {
-        console.error(`[POST /chat/stream] Error sending error response for thread ${errorThreadId}:`, finalError);
-        res.end();
+    console.error(`[POST /chat/stream] Error during stream for thread ${currentThreadId || 'N/A'}:`, error);
+    // If protocol headers weren't sent, send an error code frame
+    if (!res.headersSent) {
+      res.setHeader('x-vercel-ai-data-stream', 'v1');
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.flushHeaders();
+      res.write(`2:${JSON.stringify({ error: error.message || 'Unknown error' })}\n`);
     }
+    res.end();
   }
 });
 
