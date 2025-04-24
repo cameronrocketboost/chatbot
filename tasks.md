@@ -122,7 +122,8 @@ _After adding the env-vars in Netlify, creating a frontend/netlify.toml that poi
     *   [x] Confirm deletion of unused Netlify Function `frontend/app/api/chat/route.ts`.
     *   [x] Update SSE frame format: initial thinking event, heartbeat, proper data frames, done event.
     *   [ ] Deploy updated backend code to Render service (ensure env vars are set).
-    *   [ ] Deploy updated frontend code to Netlify.
+    *   [ ] Deploy updated frontend code to Render service (set build command and publish directory, e.g., `yarn build --filter frontend`, publish `frontend/.next` or `frontend/out`) and configure frontend environment variables: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_LANGGRAPH_API_URL`.
+    *   [ ] Remove Netlify-specific configuration: delete `frontend/netlify.toml` and any Netlify function routes.
     *   [ ] Test deployed chat functionality:
         *   [ ] Verify token-by-token streaming.
         *   [ ] Check for frontend/backend console errors.

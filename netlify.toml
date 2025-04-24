@@ -1,9 +1,0 @@
-[build]
-  command = """
-  echo 'URL='${#SUPABASE_URL}'  SRK='${#SUPABASE_SERVICE_ROLE_KEY}
-  turbo run build --filter frontend
-  """
-
-# Optional: Define the publish directory if needed
-# [build]
-#   publish = "frontend/.next" 
