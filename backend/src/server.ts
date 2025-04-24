@@ -187,17 +187,21 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
   const trimmedContent = userMessageContent?.trim() ?? '';
   if (trimmedContent === '') { // Check for empty/whitespace-only
     console.warn("[POST /chat/stream] Missing or empty message content.", req.body);
-    // Send an error back via SSE if possible, otherwise standard HTTP error
-    if (res.headersSent && !res.writableEnded) {
-        sendSSE(res, { error: 'Message content cannot be empty' }, 'error');
-        res.end();
-    } else if (!res.headersSent) {
-        res.status(400).json({ error: 'Message content cannot be empty' });
-    }
+    // Always respond with SSE-framed error instead of raw JSON
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+    });
+    res.flushHeaders?.(); // Ensure headers reach the client immediately
+    const sendError = (obj: unknown) => res.write(`data:${JSON.stringify(obj)}\n\n`);
+    sendError({ error: 'Message content cannot be empty' });
+    sendError("[DONE]");
+    res.end();
     return;
   }
   
-  // --- Backend safety net for short messages --- 
+  // --- Backend safety net for short messages (Revised) --- 
   if (trimmedContent.length < 2) {
     console.log(`[POST /chat/stream] Query too short (${trimmedContent.length} chars), sending clarification.`);
     // Set headers using writeHead for SSE
@@ -206,12 +210,11 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
     });
-    res.write(`data: ${JSON.stringify({
-      role: "assistant",
-      content: "I'll answer once you finish your question 🙂", // Updated message
-    })}
-
-`);
+    res.flushHeaders?.(); // Ensure headers sent
+    // Helper to send SSE frames (defined later, but usable here)
+    const sendHelper = (obj: unknown) => res.write(`data:${JSON.stringify(obj)}\n\n`);
+    sendHelper({ role: "assistant", content: "Could you finish your question first? 😊" });
+    sendHelper("[DONE]");
     res.end();
     return;
   }
@@ -238,9 +241,10 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
       "Cache-Control": "no-cache",
       "Connection": "keep-alive",
     });
-    // res.flushHeaders(); // No longer needed after writeHead
+    // Ensure headers reach the client immediately
+    res.flushHeaders?.(); 
 
-    // --- SSE Heartbeat --- 
+    // --- SSE Heartbeat ---
     const heartbeatInterval = setInterval(() => {
       if (!res.writableEnded) {
           sendSSE(res, { type: 'heartbeat', timestamp: Date.now() }, 'heartbeat');
@@ -270,8 +274,10 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
     };
     console.log('[POST /chat/stream] Using graph config:', JSON.stringify(graphConfig));
 
-    // --- Direct Graph Execution & Streaming Loop (REVISED) --- 
-    // Removed finalState tracking
+    // --- Direct Graph Execution & Streaming Loop (REVISED AGAIN) --- 
+
+    // helper – send one SSE frame
+    const send = (obj: unknown) => res.write(`data:${JSON.stringify(obj)}\n\n`);
 
     try {
       console.log(`[POST /chat/stream] Invoking retrievalGraph.stream for thread ${currentThreadId}`);
@@ -283,28 +289,23 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
         // Check if it's a messages patch
         if (!("messages" in patch)) continue;
 
-        const meta = (patch as any).__meta__ || {}; // Extract metadata if present
         const lastMessage = patch.messages.at(-1);
         
         // CONCISE LOGGING (Revised)
-        console.log(
-          `[Patch] ${meta?.langgraph_node ?? "?"} ` +
-          (patch.messages ? `Δ=${patch.messages.length}` : Object.keys(patch)[0] ?? 'unknown') // Log message count or patch type
-        );
+        // console.log( // Optional: Keep or remove concise logging
+        //   `[Patch] ${meta?.langgraph_node ?? "?"} ` +
+        //   (patch.messages ? `Δ=${patch.messages.length}` : Object.keys(patch)[0] ?? 'unknown')
+        // );
         // END CONCISE LOGGING
         
-        // --- STREAM EVERY AI CHUNK / MESSAGE ---
+        // --- STREAM EVERY AI CHUNK / MESSAGE (Using send helper) ---
         if (
           lastMessage &&
-          (lastMessage.type?.startsWith("AIMessage") || // Catches AIMessageChunk and AIMessage
-           lastMessage.role === "assistant")            // Catches messages where role might be set by reducer
+          lastMessage.type?.startsWith("AIMessage") // Catches AIMessageChunk and AIMessage
+          // No need to check role explicitly if type check is sufficient
         ) {
-          // console.log('[POST /chat/stream] Sending assistant message/chunk patch via SSE'); // Can be removed for less noise
-          res.write(`data: ${JSON.stringify(lastMessage)}
-
-`); // Send the whole message object
+          send(lastMessage); // ← Emits each chunk/message in proper SSE format
         }
-        // No need to track finalState here anymore
       }
       console.log(`[POST /chat/stream] Graph stream finished for thread ${currentThreadId}.`);
       // Removed logging of finalState
@@ -333,7 +334,7 @@ data: ${errorData}
     // End the SSE stream cleanly and signal completion
     if (!res.writableEnded) {
       console.log('[POST /chat/stream] Ending SSE stream with [DONE].');
-      res.write("data: [DONE]\n\n", 'utf-8'); // Explicitly specify UTF-8 encoding
+      send("[DONE]"); // Use send helper to signal end of stream
       res.end(); 
     }
 
