@@ -367,20 +367,6 @@ async function chunkAndEmbedDocs(
   };
 }
 
-/**
- * Estimates the slide number based on content patterns
- */
-function estimateSlideNumber(content: string, fallbackIndex: number): number {
-  // Simple heuristic: Try to find "Slide X" or similar patterns
-  const slideMatch = content.match(/\bSlide\s+(\d+)\b/i);
-  if (slideMatch && slideMatch[1]) {
-    return parseInt(slideMatch[1], 10);
-  }
-  
-  // Fallback to chunk index + 1 (to start from slide 1)
-  return fallbackIndex + 1;
-}
-
 // --- Graph Definition ---
 
 console.log("Defining Simple LangGraph Ingestion Graph...");
