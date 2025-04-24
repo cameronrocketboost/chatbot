@@ -228,11 +228,14 @@ async function answerQueryDirectly(
       };
     }
     
+    // --- ADD LOGGING --- 
+    console.log('[RetrievalGraph | answerQueryDirectly] Returning SUCCESS state update:', JSON.stringify({ messages: [userHumanMessage, response] }, null, 2));
+    // --- END LOGGING --- 
     return { 
       messages: [userHumanMessage, response],
       threadInfo: threadInfoUpdate
     };
-  } catch (error) {
+  } catch (error: any) { // Add :any to error type
     console.error('[RetrievalGraph] Error in answerQueryDirectly:', error);
     
     // Create a fallback response for common greetings if LLM call fails
@@ -249,18 +252,15 @@ async function answerQueryDirectly(
       fallbackResponse = "I can answer questions directly or search through your uploaded documents to find specific information.";
     }
     
-    const fallbackAIMessage = new AIMessage(fallbackResponse);
-    
-    // Add error information
-    const errorInfo = {
-      message: error instanceof Error ? error.message : 'Unknown error in direct answer',
-      node: 'answerQueryDirectly',
-      timestamp: Date.now()
-    };
-    
-    return { 
-      messages: [new HumanMessage(state.query), fallbackAIMessage],
-      error: errorInfo
+    // Reconstruct HumanMessage using state.query
+    const originalUserMessage = new HumanMessage(state.query); 
+    const fallbackAiMessage = new AIMessage(fallbackResponse);
+    // --- ADD LOGGING (Fixed variable name) --- 
+    console.log('[RetrievalGraph | answerQueryDirectly] Returning ERROR state update:', JSON.stringify({ messages: [originalUserMessage, fallbackAiMessage], error: error.message }, null, 2));
+    // --- END LOGGING --- 
+    return {
+        messages: [originalUserMessage, fallbackAiMessage], // Return fallback with reconstructed HumanMessage
+        error: error.message // Add error message to state
     };
   }
 }
@@ -289,10 +289,10 @@ async function routeQuery(
  * Extract any document-specific filters from the query
  */
 export async function extractQueryFilters(
-  state: typeof AgentStateAnnotation.State,
-  _config: RunnableConfig // Prefixed unused parameter
+  state: AgentState,
+  _config: RunnableConfig
 ): Promise<{ 
-  queryFilters: DocumentFilters; 
+  queryFilters: Record<string, any>;
   cleanedQuery: string; 
   active_document_filter: { source: string; filterApplied?: string } | null; 
   new_explicit_filter_set: boolean;
@@ -316,7 +316,7 @@ export async function extractQueryFilters(
   // << Initialize filter variables based on incoming state >>
   let finalActiveFilter: { source: string; filterApplied?: string } | null = existingFilter; 
   let cleanedQuery = currentQuery; // Start with original query
-  let queryFilters: DocumentFilters = existingFilter 
+  let queryFilters: Record<string, any> = existingFilter 
     ? { 'metadata.source': existingFilter.source, filterApplied: existingFilter.filterApplied || `Initial: ${existingFilter.source}` }
     : {};
   let newExplicitFilterSet = false; // << Initialize flag
