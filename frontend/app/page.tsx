@@ -203,6 +203,9 @@ const ChatInputForm: React.FC<ChatInputFormProps> = ({ input, handleInputChange,
 // Chat Interface Component
 function ChatInterface() {
   const { threadId, isLoading: isThreadIdLoading, createAndSetNewThreadId } = useThreadId();
+  // Configure backend base URL, default to current origin if env var is missing
+  const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ??
+    (typeof window !== 'undefined' ? window.location.origin : '');
 
   const {
     messages,
@@ -211,9 +214,9 @@ function ChatInterface() {
     handleSubmit,
     isLoading: isChatLoading,
     error,
-    append,    // optional: to programmatically add messages
+    append,
   } = useChat({
-    api: '/chat/stream',        // or '/api/chat/stream' if under Next.js App Router
+    api: `${BACKEND_URL}/chat/stream`,
     id: threadId || undefined,
     body: { threadId },
     streamProtocol: 'text',     // 👈 tells the SDK to parse text/event-stream
