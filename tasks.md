@@ -458,3 +458,5 @@ After reviewing the codebase, there are several issues with the document retriev
    * [x] **Fixed Linter Errors:** Corrected try/catch structure and added type annotations in `shared/retrieval.ts`.
    * [ ] Ensure consistent ISO date format is used for `parsedAt` metadata during document ingestion
    * [ ] Add proper indexing for the `parsedAt`
+
+*   [ ] Update `ChatInterface` (frontend) to parse code-2 stream events and display stage messages (e.g., message_saved, history_fetched, executing_graph, finalizing) for improved UX during streaming.
