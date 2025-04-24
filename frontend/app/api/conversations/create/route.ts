@@ -1,19 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/langgraph-server';
-import { createConversation, getConversationWithMessages } from '@/lib/supabase-conversations';
-import { v4 as uuidv4 } from 'uuid';
+import { createConversation } from '@/lib/supabase-conversations';
 
 export const dynamic = 'force-dynamic'; // Prevent build-time execution
 
 export async function POST(req: NextRequest) {
   try {
     console.log('POST /api/conversations/create called');
-    const serverClient = createServerClient(); // Get client at runtime
-
-    // Create a new thread using LangGraph SDK client
-    const thread = await serverClient.createThread();
-    const threadId = thread.thread_id;
-    console.log(`Created new thread: ${threadId}`);
+    // Create a new thread via the chat service
+    const apiUrl = process.env.NEXT_PUBLIC_CHAT_API_URL;
+    if (!apiUrl) throw new Error('Missing NEXT_PUBLIC_CHAT_API_URL');
+    const threadRes = await fetch(`${apiUrl}/chat/threads`, { method: 'POST' });
+    if (!threadRes.ok) throw new Error(`Failed to create thread: ${threadRes.statusText}`);
+    const threadData = await threadRes.json();
+    const threadId = threadData.threadId;
+    console.log(`Created new thread via API: ${threadId}`);
 
     // Extract parameters
     const body = await req.json();

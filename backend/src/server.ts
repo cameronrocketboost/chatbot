@@ -39,16 +39,16 @@ if (!process.env.OPENAI_API_KEY) {
   // throw new Error("Missing critical environment variable: OPENAI_API_KEY");
 }
 
-// Initialize the LangGraph SDK client with explicit API URL and API key
-const langGraphApiUrl = process.env.LANGGRAPH_API_URL;
-if (!langGraphApiUrl) {
-  throw new Error('Missing LANGGRAPH_API_URL environment variable');
+// Initialize the LangGraph SDK client with actual Graph API URL
+const graphApiUrl = process.env.GRAPH_API_URL;
+if (!graphApiUrl) {
+  throw new Error('Missing GRAPH_API_URL environment variable (Graph API endpoint)');
 }
 if (!process.env.LANGCHAIN_API_KEY) {
   throw new Error('Missing LANGCHAIN_API_KEY environment variable');
 }
 const langGraphClient = new LangGraphClient({
-  apiUrl: langGraphApiUrl,
+  apiUrl: graphApiUrl,
   defaultHeaders: {
     'Content-Type': 'application/json',
     'X-Api-Key': process.env.LANGCHAIN_API_KEY,
@@ -246,6 +246,34 @@ app.post('/chat/threads', async (_req: express.Request, res: express.Response) =
   }
 });
 
+// Create new conversation (Graph thread + Supabase record)
+app.post('/conversations/create', async (req: express.Request, res: express.Response) => {
+  try {
+    // Ensure Supabase client is initialized
+    if (!supabase) {
+      res.status(500).json({ error: 'Supabase client not initialized' });
+      return;
+    }
+    const title = (req.body as any).title || 'New Conversation';
+    // Create new Graph thread
+    const newThread = await langGraphClient.threads.create();
+    const threadId = newThread.thread_id;
+    console.log(`[POST /conversations/create] New Graph thread: ${threadId}`);
+    // Save conversation record in Supabase
+    const { data: conversationData, error } = await supabase
+      .from('conversations')
+      .insert({ thread_id: threadId, title })
+      .select('id, thread_id, title, created_at, updated_at')
+      .single();
+    if (error) throw error;
+    // Respond with conversation info including threadId
+    res.json({ ...conversationData, threadId });
+  } catch (error: any) {
+    console.error('[POST /conversations/create] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // --- New SSE Chat Streaming Endpoint --- 
 app.post('/chat/stream', async (req: express.Request, res: express.Response): Promise<void> => {
   console.log("[POST /chat/stream] Request received.");
@@ -281,14 +309,7 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
     await addMessageToConversation(currentThreadId, { role: 'user', content: userMessageContent });
 
     // --- Set headers for data-stream v1 protocol ---
-    res.setHeader('x-vercel-ai-data-stream', 'v1');
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    // Recommended headers to disable buffering
-    res.setHeader('Transfer-Encoding', 'chunked');
-    res.setHeader('Content-Encoding', 'none');
-    res.setHeader('X-Accel-Buffering', 'no');
+    res.setHeader('Content-Type','text/event-stream');
     res.flushHeaders();
 
     // --- Prepare Graph Input --- 
@@ -302,6 +323,7 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
       { input: input, streamMode: "updates" }
     );
 
+    // Accumulate content for final message
     let accumulatedContent = "";
 
     for await (const chunk of streamResponse) {
@@ -309,8 +331,7 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
       if (streamChunk.event === 'on_llm_stream' && typeof streamChunk.data?.chunk === 'string') {
         const token = streamChunk.data.chunk;
         accumulatedContent += token;
-        // Partial update: code 0
-        res.write(`0:${JSON.stringify(token)}\n`);
+        res.write(token);
       }
     }
     
@@ -332,20 +353,13 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
 
   } catch (error: any) {
     console.error(`[POST /chat/stream] Error during stream for thread ${currentThreadId || 'N/A'}:`, error);
-    // Always send a final error event as code 1
-    res.setHeader('x-vercel-ai-data-stream', 'v1');
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.flushHeaders();
-    const errorContent = `Error: ${error.message}`;
-    res.write(
-      `1:${JSON.stringify({
-        id: uuidv4(),
-        role: 'assistant',
-        content: errorContent,
-        parts: [{ type: 'text', text: errorContent }],
-        metadata: { sources: [] }
-      })}\n`
-    );
+    // Send final error event if not yet sent
+    if (!res.headersSent) {
+      res.setHeader('Content-Type','text/event-stream');
+      res.flushHeaders();
+      const errorContent = `Error: ${error.message}`;
+      res.write(errorContent);
+    }
     res.end();
   }
 });
