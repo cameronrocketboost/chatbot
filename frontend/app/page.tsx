@@ -219,7 +219,7 @@ function ChatInterface() {
     api: `${BACKEND_URL}/chat/stream`,
     id: threadId || undefined,
     body: { threadId },
-    streamProtocol: 'text', // 👈 correct for ai@3.2+
+    streamProtocol: 'data', // 👈 parse SSE or 'code' protocol frames
   });
 
   const { toast } = useToast();
