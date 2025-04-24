@@ -4,7 +4,7 @@ import type React from 'react';
 import { useRouter } from 'next/navigation';
 
 import { useToast } from '@/hooks/use-toast';
-import { useRef, useState, useEffect, useCallback, Suspense, useLayoutEffect, useMemo } from 'react';
+import { useRef, useCallback, Suspense, useLayoutEffect, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ArrowUp, Loader2, UploadCloud, Info, Search, FileText, Filter } from 'lucide-react';
@@ -17,7 +17,7 @@ import { UploadProgress } from '@/components/upload-progress';
 import { useThreadId } from '@/hooks/useThreadId';
 import { ErrorBanner } from '@/components/error-banner';
 import { isChatMessage } from '@/utils/chatUtils';
-import { createParser, EventSourceMessage } from 'eventsource-parser';
+import { useChat } from 'ai/react';
 
 // Define a specific type for thinking annotations
 type ThinkingAnnotation = { type: 'thinking'; [k: string]: JSONValue };
@@ -203,66 +203,29 @@ const ChatInputForm: React.FC<ChatInputFormProps> = ({ input, handleInputChange,
 // Chat Interface Component
 function ChatInterface() {
   const { threadId, isLoading: isThreadIdLoading, createAndSetNewThreadId } = useThreadId();
+
+  const {
+    messages,
+    input,
+    handleInputChange,
+    handleSubmit,
+    isLoading: isChatLoading,
+    error,
+    append,    // optional: to programmatically add messages
+  } = useChat({
+    api: '/chat/stream',        // or '/api/chat/stream' if under Next.js App Router
+    id: threadId || undefined,
+    body: { threadId },
+    streamProtocol: 'text',     // 👈 tells the SDK to parse text/event-stream
+  });
+
   const { toast } = useToast();
 
-  // Define Backend URL from environment variable
-  const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || '';
-  if (!BACKEND_URL) {
-    // Optionally throw an error or log a warning if the URL is missing
-    console.warn('NEXT_PUBLIC_BACKEND_URL is not set. API calls may fail.');
-  }
+  // clicking an example prompt just re-uses the built-in setter
+  const onExampleClick = (prompt: string) => handleInputChange({ target: { value: prompt } } as any);
 
-  // Custom SSE-based chat streamer
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState<string>("");
-  const [isChatLoading, setIsChatLoading] = useState<boolean>(false);
-  const [error, setError] = useState<Error | null>(null);
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setInput(e.target.value);
-  };
-
-  const handleSubmit = useCallback(async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!threadId) return;
-    setError(null);
-    setIsChatLoading(true);
-    // Optimistically append user message
-    setMessages(prev => [...prev, { role: 'user', content: input }] as Message[]);
-    try {
-      const res = await fetch(`${BACKEND_URL}/chat/stream`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ threadId, messages: [{ role: 'user', content: input }] }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const parser = createParser({
-        onEvent(event: EventSourceMessage) {
-          // Handle data frames
-          if (event.data === '[DONE]') return;
-          const parsed = JSON.parse(event.data) as Message;
-          setMessages(prev => [...prev, parsed]);
-        }
-      });
-      const reader = res.body!.getReader();
-      const decoder = new TextDecoder();
-      let doneReading = false;
-      while (!doneReading) {
-        const { value, done } = await reader.read();
-        doneReading = done;
-        if (!doneReading && value) {
-          parser.feed(decoder.decode(value));
-        }
-      }
-    } catch (err: any) {
-      setError(err);
-    } finally {
-      setIsChatLoading(false);
-      setInput('');
-    }
-  }, [BACKEND_URL, threadId, input]);
-  
-  const typedMessages: Message[] = messages;
+  const isOverallLoading = isChatLoading || isThreadIdLoading;
+  const typedMessages = messages as Message[];
 
   // --- Suggestion #4: Memoize message filtering --- 
   const thinkingMessageIndex = useMemo(() => {
@@ -292,16 +255,8 @@ function ChatInterface() {
   }, [messagesToRender]); // Scroll when the rendered messages change
 
   const handleNewChat = useCallback(async () => {
-    setMessages([]);
-    setInput('');
-    const newId = await createAndSetNewThreadId();
-    if (newId) {
-      // Maybe trigger a reload or other action if needed?
-    }
-  }, [createAndSetNewThreadId, setMessages, setInput]);
-
-  // Combine loading states for the input form
-  const isOverallLoading = isChatLoading || isThreadIdLoading;
+    // Implementation of handleNewChat
+  }, [createAndSetNewThreadId]);
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-gray-950">
@@ -311,7 +266,7 @@ function ChatInterface() {
           <div className="flex justify-center items-center h-full"><Loader2 className="h-8 w-8 animate-spin text-sladen-teal" /></div>
         )}
         {!isThreadIdLoading && messagesToRender.length === 0 && !isChatLoading && (
-          <InitialChatView onExampleClick={setInput} />
+          <InitialChatView onExampleClick={onExampleClick} />
         )}
         {!isThreadIdLoading && messagesToRender.map((msg) => (
             <ChatMessage key={msg.id} message={msg} />
@@ -335,7 +290,7 @@ function ChatInterface() {
         input={input}
         handleInputChange={handleInputChange}
         handleSubmit={handleSubmit}
-        isLoading={isOverallLoading}
+        isLoading={isChatLoading || isThreadIdLoading}
         handleNewChat={handleNewChat}
         threadIdExists={!!threadId}
       />
