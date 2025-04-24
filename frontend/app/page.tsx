@@ -205,6 +205,10 @@ function ChatInterface() {
   const [threadId, setThreadId] = useState<string | null>(null);
   const { toast } = useToast();
 
+  // Stage message for UX
+  const [stageMessage, setStageMessage] = useState<string | null>(null);
+  
+  // Handle stage updates via useChat callbacks
   const {
     messages,
     input,
@@ -218,21 +222,18 @@ function ChatInterface() {
   } = useChat({
     api: 'https://chatbot-zzeo.onrender.com/chat/stream',
     id: threadId || undefined,
-    body: {
-      threadId: threadId
-    },
+    body: { threadId: threadId },
     onResponse: (response) => {
-      // No action needed on response start for now
-    },
-    onFinish: (message) => {
-      console.log("Chat finished, final message:", message);
+      if (!stageMessage) {
+        setStageMessage('Generating response...');
+      }
     },
     onError: (error) => {
-      console.error("Chat error:", error);
-      toast({ title: 'Chat Error', description: error.message, variant: 'destructive' });
+      console.error('Chat error:', error);
+      setStageMessage(null);
     },
   });
-
+  
   const typedMessages: Message[] = messages as Message[];
 
   useEffect(() => {
@@ -272,7 +273,7 @@ function ChatInterface() {
   const handleNewChat = useCallback(async () => {
     console.log("Creating new chat thread via API...");
     try {
-      const response = await fetch('/api/chat/threads', { method: 'POST' });
+      const response = await fetch('https://chatbot-zzeo.onrender.com/chat/threads', { method: 'POST' });
       if (!response.ok) throw new Error(`Failed to create thread: ${response.statusText}`);
       const data = await response.json();
       const newThreadId = data.threadId;

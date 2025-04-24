@@ -276,11 +276,17 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
 
+    // Thinking stage: user message saved
+    res.write(`2:${JSON.stringify({ stage: 'message_saved' })}\n`);
     console.log(`[POST /chat/stream] Starting data-stream v1 for thread ${currentThreadId}...`);
 
     // --- Prepare Graph Input --- 
     const history = await getMessageHistory(currentThreadId); 
+    // Thinking stage: history fetched
+    res.write(`2:${JSON.stringify({ stage: 'history_fetched' })}\n`);
     const input = { query: userMessageContent, contextMessages: history || [] }; 
+    // Thinking stage: executing graph
+    res.write(`2:${JSON.stringify({ stage: 'executing_graph' })}\n`);
 
     // --- Stream Graph Execution --- 
     const streamResponse = langGraphClient.runs.stream(
@@ -302,6 +308,8 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
     }
     
     console.log(`[POST /chat/stream] Stream finished for thread ${currentThreadId}.`);
+    // Thinking stage: graph execution complete, finalizing
+    res.write(`2:${JSON.stringify({ stage: 'finalizing' })}\n`);
 
     // Send final structured assistant message: code 1
     const finalState: any = await langGraphClient.threads.getState(currentThreadId);
