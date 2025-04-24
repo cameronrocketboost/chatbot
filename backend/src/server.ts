@@ -9,7 +9,7 @@ import dotenv from 'dotenv';
 // import { Client as LangGraphClient } from '@langchain/langgraph-sdk'; // REMOVE Client SDK import
 import { v4 as uuidv4 } from 'uuid'; // Import for data-stream v1 final message ID
 // import { createClient, SupabaseClient } from '@supabase/supabase-js'; // REMOVED - Supabase imports are now in supabaseRepo
-import { HumanMessage } from '@langchain/core/messages';
+// import { HumanMessage, BaseMessage } from '@langchain/core/messages';
 // import { addRoutes } from '@langchain/core/utils/langgraph'; // REMOVED - Cannot find module
 // import { graph as ingestionGraph } from './ingestion_graph/graph.js'; // REMOVED - No longer mounting graph routes here
 // import { graph as retrievalGraph } from './retrieval_graph/graph.js'; // REMOVED - No longer mounting graph routes here
@@ -160,6 +160,21 @@ app.post('/conversations/create', async (req: express.Request, res: express.Resp
   }
 });
 
+// --- Helper function to send SSE data frames ---
+function sendSSE(res: express.Response, data: any, eventType: string = 'message') {
+  // Ensure response is writable before attempting to write
+  if (!res.writableEnded) {
+    try {
+      res.write(`event: ${eventType}\n`); // Standard SSE event field
+      res.write(`data: ${JSON.stringify(data)}\n\n`); // Standard SSE data field + double newline
+    } catch (error) {
+      console.error("[SSE Helper] Error writing to stream:", error);
+      // Optionally close the response here if writing fails critically
+      // if (!res.writableEnded) res.end(); 
+    }
+  }
+}
+
 // --- New SSE Chat Streaming Endpoint --- 
 app.post('/chat/stream', async (req: express.Request, res: express.Response): Promise<void> => {
   console.log("[POST /chat/stream] Request received.");
@@ -169,142 +184,132 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
   const currentThreadIdFromRequest = requestBody?.threadId;
   const userMessageContent = messages.length > 0 ? messages[messages.length - 1].content : null;
 
-  if (!userMessageContent) {
-    console.warn("[POST /chat/stream] Missing message content.", req.body);
-    res.status(400).json({ error: 'Message content is required' });
+  // --- Validate User Message --- 
+  if (!userMessageContent || userMessageContent.trim() === '') { // Check for empty/whitespace-only
+    console.warn("[POST /chat/stream] Missing or empty message content.", req.body);
+    // Send an error back via SSE if possible, otherwise standard HTTP error
+    if (res.headersSent && !res.writableEnded) {
+        sendSSE(res, { error: 'Message content cannot be empty' }, 'error');
+        res.end();
+    } else if (!res.headersSent) {
+        res.status(400).json({ error: 'Message content cannot be empty' });
+    }
     return;
   }
   
   let currentThreadId = currentThreadIdFromRequest;
 
   try {
-    // If threadId is missing, generate a new one
+    // --- Thread ID Handling & Initial Message Save --- 
     if (!currentThreadId) {
       console.log("[POST /chat/stream] No threadId provided, generating new thread ID...");
       currentThreadId = uuidv4();
       console.log("[POST /chat/stream] New thread ID generated:", currentThreadId);
-      // Set header so client knows the ID (important now!)
       res.setHeader('X-Chat-Thread-Id', currentThreadId); 
-      // Save the user message to the *new* thread before proceeding
       await addMessageToConversation(currentThreadId, { role: 'user', content: userMessageContent! });
       console.log("[POST /chat/stream] Saved initial user message to new thread.");
     } else {
-      // If threadId *was* provided, save the message as before
       await addMessageToConversation(currentThreadId, { role: 'user', content: userMessageContent! });
     }
 
-    // --- Set headers for data-stream v1 protocol ---
+    // --- Set headers for data-stream v1 protocol (SSE) ---
     res.setHeader('Content-Type','text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
+    res.flushHeaders(); // Send headers immediately
 
     // --- SSE Heartbeat --- 
-    const heartbeatInterval = setInterval(() => { /* ... heartbeat logic ... */ }, 15000);
+    const heartbeatInterval = setInterval(() => {
+      if (!res.writableEnded) {
+          sendSSE(res, { type: 'heartbeat', timestamp: Date.now() }, 'heartbeat');
+      } else {
+          clearInterval(heartbeatInterval); // Stop if connection closes
+      }
+    }, 15000); // Send every 15 seconds
 
-    // --- Prepare Graph Input State --- 
-    const history = await getMessageHistory(currentThreadId!);
-    const graphInputMessages = [...history, new HumanMessage(userMessageContent!)];
-    const initialState = { messages: graphInputMessages };
+    // --- Prepare Graph Input State (Using correct fields) --- 
+    const history = await getMessageHistory(currentThreadId!); 
+    const graphInputState = {
+      // Use the specific field names expected by the graph state
+      query: userMessageContent,           // Pass the non-empty user message
+      contextMessages: history,          // Pass the fetched history 
+    }; 
     
-    // --- Prepare Graph Config (Fix #1) --- 
-    // Start with an empty RunnableConfig for type safety
+    // --- Prepare Graph Config --- 
     const baseConfig: RunnableConfig = {}; 
-    // Get default configuration values 
-    // Pass baseConfig to ensureAgentConfiguration, it expects RunnableConfig
     const agentDefaults = ensureAgentConfiguration(baseConfig);
     const graphConfig = {
       configurable: {
         thread_id: currentThreadId!,
-        // Spread the default config values required by the graph's schema
         ...agentDefaults 
-      } 
+      },
+      // Set stream mode to get messages patches and final values
+      streamMode: ["messages", "values"] as ("messages" | "values")[], 
     };
     console.log('[POST /chat/stream] Using graph config:', JSON.stringify(graphConfig));
 
-    // --- Direct Graph Execution & Simplified Streaming --- 
-    let finalAiMessageContent = "";
-    let finalSources: any[] = [];
-    let finalStateSnapshot: any = null;
+    // --- Direct Graph Execution & Streaming Loop --- 
+    let finalState: any = null; // Variable to store the final state
 
     try {
       console.log(`[POST /chat/stream] Invoking retrievalGraph.stream for thread ${currentThreadId}`);
+      const stream = await retrievalGraph.stream(graphInputState, graphConfig);
       
-      // --- Await the stream object first (Fix #2) ---
-      const stream = await retrievalGraph.stream(initialState, graphConfig);
-      
-      // Now iterate over the resolved stream object
-      for await (const stateUpdate of stream) {
-        // stateUpdate contains the full graph state at each step
-        // We just need the *final* state to get the complete AI message
-        // console.log("[Stream Update]:", JSON.stringify(stateUpdate, null, 2)); // DEBUG
-        finalStateSnapshot = stateUpdate; // Keep track of the latest state
+      // Iterate over the stream of patches and values
+      for await (const patch of stream) {
+        // console.log("[Stream Patch]:", JSON.stringify(patch, null, 2)); // DEBUG: Log every patch
+        
+        // Check if the patch contains messages updates
+        if (patch && typeof patch === 'object' && 'messages' in patch && Array.isArray(patch.messages)) {
+          // Get the last message added in this patch
+          const lastMessage = patch.messages[patch.messages.length - 1];
+          
+          // Check if it's an AI message (either type 'ai' or role 'assistant')
+          // Also ensure it's a valid BaseMessage object before sending
+          if (lastMessage && (lastMessage.type === 'ai' || lastMessage.role === 'assistant') && lastMessage.content) {
+            console.log('[POST /chat/stream] Sending assistant message patch via SSE');
+            // Send the AI message object using the standard SSE format
+            sendSSE(res, lastMessage, 'message'); 
+          }
+        }
+        
+        // Keep track of the latest full state (the last patch is the final state)
+        finalState = patch; 
       }
       console.log(`[POST /chat/stream] Graph stream finished for thread ${currentThreadId}.`);
-
-      // Extract final message and sources from the last state snapshot
-      if (finalStateSnapshot && Array.isArray(finalStateSnapshot.messages)) {
-         const lastMessage = finalStateSnapshot.messages[finalStateSnapshot.messages.length - 1];
-         if (lastMessage && (lastMessage.type === 'ai' || lastMessage.role === 'assistant')) {
-             finalAiMessageContent = lastMessage.content;
-             // Check for sources in the final state (adjust path if needed based on graph state)
-             finalSources = finalStateSnapshot.documents ?? []; // Assuming sources are in state.documents
-             console.log(`[POST /chat/stream] Extracted final AI message and ${finalSources.length} sources.`);
-         } else {
-            console.warn('[POST /chat/stream] Last message in final state was not AI:', lastMessage);
-            finalAiMessageContent = "Error: Could not extract final AI response.";
-         }
-      } else {
-         console.error('[POST /chat/stream] Could not get final state or messages from graph stream.');
-         finalAiMessageContent = "Error: Failed to get final state from graph.";
-      }
+      console.log('[POST /chat/stream] Final Graph State:', JSON.stringify(finalState, null, 2)); // Log the final state
 
     } catch (streamError: any) {
       console.error(`[POST /chat/stream] Error *during* graph stream execution for thread ${currentThreadId}:`, streamError);
-      if (!res.writableEnded) {
-        res.write(`2:${JSON.stringify({ error: streamError.message || 'Error during stream execution' })}\n`);
-      }
-      throw streamError; // Re-throw to be caught by outer catch
+      // Send an error event via SSE if stream is still open
+      sendSSE(res, { error: streamError.message || 'Error during stream execution' }, 'error'); 
+      // No need to re-throw if we handle it here, just end the response
     } finally {
       clearInterval(heartbeatInterval);
       console.log(`[POST /chat/stream] Heartbeat cleared for thread ${currentThreadId}.`);
     }
 
-    // --- Send final structured assistant message (Data Stream v1 Frame 1) ---
+    // End the SSE stream cleanly
     if (!res.writableEnded) {
-      const finalMessagePayload = {
-        id: uuidv4(),
-        role: 'assistant',
-        content: finalAiMessageContent,
-        parts: [{ type: 'text', text: finalAiMessageContent }],
-        metadata: { sources: finalSources }
-      };
-      // --- ADD LOGGING --- 
-      const payloadString = JSON.stringify(finalMessagePayload);
-      console.log('[POST /chat/stream] Sending 1: frame payload:', payloadString);
-      // --- END ADD LOGGING ---
-      res.write(`1:${payloadString}\n`);
-      console.log('[POST /chat/stream] Sent final message frame.');
-    } else {
-      console.warn('[POST /chat/stream] Response ended before final message could be sent.');
+      console.log('[POST /chat/stream] Ending SSE stream.');
+      sendSSE(res, { status: 'done' }, 'control'); // Optional: Send a control message indicating end
+      res.end(); 
     }
-
-    res.end(); // End the SSE stream
 
   } catch (error: any) {
-    // ... (outer error handling remains mostly the same) ...
+    // Overall error handling (e.g., initial DB save fails)
     console.error(`[POST /chat/stream] Overall error for thread ${currentThreadId || 'N/A'}:`, error);
-    // Clear interval just in case it wasn't cleared in finally (e.g., error before try block)
-    // if (typeof heartbeatInterval !== 'undefined') clearInterval(heartbeatInterval);
-    if (res.headersSent && !res.writableEnded) { 
-      // Attempt to send an error frame if stream is still open
-      try {
-        res.write(`2:${JSON.stringify({ error: 'An unexpected server error occurred.' })}\n`);
-      } catch (writeError) {
-        console.error('[POST /chat/stream] Failed to write error frame to stream:', writeError);
-      } 
+    // Ensure heartbeat is cleared if it exists
+    // if (typeof heartbeatInterval !== 'undefined' && heartbeatInterval) clearInterval(heartbeatInterval);
+    
+    // Send error response if headers haven't been sent
+    if (!res.headersSent) {
+      res.status(500).json({ error: error.message || 'An unexpected server error occurred.' });
+    } else if (!res.writableEnded) {
+      // If headers were sent, try to send an SSE error event and end
+      sendSSE(res, { error: error.message || 'An unexpected server error occurred.' }, 'error');
+      res.end();
     }
-    if (!res.writableEnded) { res.end(); }
   }
 });
 

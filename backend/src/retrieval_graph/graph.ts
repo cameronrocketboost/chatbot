@@ -231,12 +231,17 @@ async function answerQueryDirectly(
     }
     
     // --- ADD LOGGING --- 
-    console.log('[RetrievalGraph | answerQueryDirectly] Returning SUCCESS state update:', JSON.stringify({ messages: [userHumanMessage, response] }, null, 2));
-    // --- END LOGGING --- 
-    return { 
+    // Create the state update object
+    const successUpdate = { 
+      ...state, // Spread the existing state first
       messages: [userHumanMessage, response],
       threadInfo: threadInfoUpdate
     };
+    console.log('[RetrievalGraph | answerQueryDirectly] Returning SUCCESS state update:', JSON.stringify(successUpdate, null, 2));
+    // --- END LOGGING --- 
+    // Return the full state object 
+    return successUpdate; 
+
   } catch (error: any) { // Add :any to error type
     console.error('[RetrievalGraph] Error in answerQueryDirectly:', error);
     
@@ -257,13 +262,18 @@ async function answerQueryDirectly(
     // Reconstruct HumanMessage using state.query
     const originalUserMessage = new HumanMessage(state.query); 
     const fallbackAiMessage = new AIMessage(fallbackResponse);
-    // --- ADD LOGGING (Fixed variable name) --- 
-    console.log('[RetrievalGraph | answerQueryDirectly] Returning ERROR state update:', JSON.stringify({ messages: [originalUserMessage, fallbackAiMessage], error: error.message }, null, 2));
-    // --- END LOGGING --- 
-    return {
-        messages: [originalUserMessage, fallbackAiMessage], // Return fallback with reconstructed HumanMessage
-        error: error.message // Add error message to state
+    
+    // Create the error state update object
+    const errorUpdate = {
+      ...state, // Spread the existing state first
+      messages: [originalUserMessage, fallbackAiMessage],
+      error: error.message // Add error message to state
     };
+    // --- ADD LOGGING (Fixed variable name) --- 
+    console.log('[RetrievalGraph | answerQueryDirectly] Returning ERROR state update:', JSON.stringify(errorUpdate, null, 2));
+    // --- END LOGGING --- 
+    // Return the full state object
+    return errorUpdate;
   }
 }
 
@@ -1146,7 +1156,7 @@ export const graph = builder.compile({
     // Optional: Define interrupt points if needed
     // interruptBefore: ['generateResponse'], 
 }).withConfig({
-  runName: 'RetrievalGraph',
+  runName: 'RetrievalGraph'
 });
 
 console.log('[RetrievalGraph] Retrieval graph defined and ready');
