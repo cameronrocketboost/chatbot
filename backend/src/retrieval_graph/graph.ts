@@ -29,10 +29,12 @@ import { Document } from "@langchain/core/documents";
 type AgentState = typeof AgentStateAnnotation.State;
 
 // Define types for filters to fix "filterApplied" property issues
+/* // REMOVE Unused Interface
 interface DocumentFilters {
   [key: string]: string | boolean | number | undefined;
   filterApplied?: string;
 }
+*/
 
 // Increase default max listeners to avoid warnings 
 EventEmitter.defaultMaxListeners = 20;
