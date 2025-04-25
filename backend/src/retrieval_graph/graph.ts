@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { StateGraph, START, END } from '@langchain/langgraph';
 import { AgentStateAnnotation } from './state.js';
-import { makeRetriever, /* retrieveFullPowerPoint, isPowerPointQuery, */ extractDocumentNameFromQuery } from '../shared/retrieval.js'; // Commented out unused imports
+import { getCustomRetriever } from '../shared/retrieval.js'; // Import getCustomRetriever
 import { formatDocs } from './utils.js';
 import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { 
@@ -11,34 +11,36 @@ import {
 import { RunnableConfig } from '@langchain/core/runnables';
 import {
   AgentConfigurationAnnotation,
-  ensureAgentConfiguration,
+  // ensureAgentConfiguration, // Removed unused import
 } from './configuration.js';
-import { loadChatModel } from '../shared/utils.js';
-import { createClient } from '@supabase/supabase-js';
-// import { ChatOpenAI } from '@langchain/openai'; // Commented out unused import
+// import { loadChatModel } from '../shared/utils.js'; // Removed unused import
+import { SupabaseClient } from '@supabase/supabase-js'; // Keep SupabaseClient type only
+// import { createClient, SupabaseClient } from '@supabase/supabase-js'; // Removed createClient import
+import { Embeddings } from "@langchain/core/embeddings"; // Import Embeddings type
 import { EventEmitter } from 'events';
 // Import the base checkpointer interface
 // import { BaseCheckpointSaver } from "@langchain/langgraph"; // Commented out unused import
 // Revert to importing PostgresSaver from its specific package
-// import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres"; // Comment out unused import causing lint error
-import { MemorySaver } from "@langchain/langgraph";
+// import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres"; // Try importing from main langgraph package
+import { MemorySaver } from "@langchain/langgraph"; // Use MemorySaver
 import { Document } from "@langchain/core/documents";
 // import { AgentState } from "./state.js"; // Remove this potential incorrect import
 // import { RunnableBranch, RunnablePassthrough } from '@langchain/core/runnables'; // <<< Removed unused imports
 import { StringOutputParser } from '@langchain/core/output_parsers';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
+import { BaseChatModel } from '@langchain/core/language_models/chat_models';
+// Import everything from the postgres checkpoint package to see exports
+// import * as CheckpointPg from "@langchain/langgraph-checkpoint-postgres"; 
 
 // Define AgentState as an alias for the actual state type
 type AgentState = typeof AgentStateAnnotation.State;
 
 // Define the expected structure for the result of retriever.invoke
 // This might need adjustment based on the actual retriever implementation
-type RetrieverResultType = {
-  documents: Document<Record<string, any>>[];
-  // Include other potential fields returned by your specific retriever if needed
-  // active_document_filter?: { source: string; filterApplied?: string } | null;
-  // new_explicit_filter_set?: boolean;
-};
+// Removed incorrect RetrieverResultType definition
+// type RetrieverResultType = {
+//   documents: Document<Record<string, any>>[];
+// };
 
 // Define types for filters to fix "filterApplied" property issues
 /* // REMOVE Unused Interface
@@ -135,12 +137,17 @@ async function classifyQuery(
   // 2. LLM Classification (if no simple match)
   console.log("[Classifier] No simple match, using LLM for classification...");
   try {
-    const configuration = ensureAgentConfiguration(config);
-    // Use a potentially faster/cheaper model for classification if configured, else default
-    const classifierModel = await loadChatModel(configuration.queryModel, 0); // Temp 0 for classification
+    // Get chat model from config
+    const chatModel = config?.configurable?.chatModel as BaseChatModel;
+    if (!chatModel) {
+        throw new Error("Chat model not found in config for classifyQuery");
+    }
+    // Removed direct loadChatModel call
+    // const configuration = ensureAgentConfiguration(config);
+    // const classifierModel = await loadChatModel(configuration.queryModel, 0);
     
     const classificationChain = ChatPromptTemplate.fromTemplate(CLASSIFIER_SYSTEM_PROMPT)
-      .pipe(classifierModel)
+      .pipe(chatModel) // Use injected model
       .pipe(new StringOutputParser());
 
     const result = await withTimeout(
@@ -171,8 +178,14 @@ async function answerQueryDirectly(
 ): Promise<typeof AgentStateAnnotation.Update> {
   console.log('[RetrievalGraph] Answering query directly without retrieval');
   try {
-    const configuration = ensureAgentConfiguration(config);
-    const model = await loadChatModel(configuration.queryModel);
+    // Get chat model from config
+    const chatModel = config?.configurable?.chatModel as BaseChatModel;
+    if (!chatModel) {
+        throw new Error("Chat model not found in config for answerQueryDirectly");
+    }
+    // Removed direct loadChatModel call
+    // const configuration = ensureAgentConfiguration(config);
+    // const model = await loadChatModel(configuration.queryModel);
     
     // Create context from previous messages if available
     const messages = [];
@@ -214,7 +227,7 @@ async function answerQueryDirectly(
 
     console.log('[RetrievalGraph] Calling LLM for direct answer');
     const response = await withTimeout(
-      model.invoke(messages),
+      chatModel.invoke(messages), // Use injected model
       30000,
       'direct answer LLM call'
     );
@@ -281,7 +294,7 @@ async function answerQueryDirectly(
  */
 export async function extractQueryFilters(
   state: AgentState,
-  _config: RunnableConfig
+  config?: RunnableConfig
 ): Promise<{ 
   queryFilters: Record<string, any>;
   cleanedQuery: string; 
@@ -341,24 +354,22 @@ export async function extractQueryFilters(
 
   // --- 1. Try explicit extraction first --- 
   let explicitExtractionResult: string | null = null;
-  // let explicitFoundFilename = false; // Commented out unused variable
   try {
-    explicitExtractionResult = extractDocumentNameFromQuery(currentQuery);
+    // TODO: Re-implement document name extraction if needed.
+    // explicitExtractionResult = getCustomRetriever(currentQuery); // Incorrect replacement, commenting out
     if (explicitExtractionResult && explicitExtractionResult !== '__LATEST__') {
       console.log(`[RetrievalGraph] Explicit regex potentially matched: "${explicitExtractionResult}". Validating via registry...`);
       
       // Validate against registry
-      const supabaseUrl = process.env.SUPABASE_URL;
-      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-      if (!supabaseUrl || !supabaseKey) {
-        throw new Error("Missing Supabase credentials for registry lookup");
+      const supabaseClient = config?.configurable?.supabaseClient as SupabaseClient;
+      if (!supabaseClient) {
+        throw new Error("Missing Supabase client in config for registry lookup");
       }
-      const supabase = createClient(supabaseUrl, supabaseKey);
       let validatedMatch = false; // Flag to track if we found a good match
       
       // --- Step 1a: Try EXACT match first ---
       console.log(`[RetrievalGraph] Attempting EXACT match validation for: "${explicitExtractionResult}"`);
-      const { data: exactMatches, error: exactRpcError } = await supabase
+      const { data: exactMatches, error: exactRpcError } = await supabaseClient
         .rpc('find_document_by_name', { 
            search_term: explicitExtractionResult, 
            exact_match: true // Force exact match
@@ -381,7 +392,7 @@ export async function extractQueryFilters(
       // --- Step 1b: Try FUZZY match only if exact match failed ---
       if (!validatedMatch) {
         console.log(`[RetrievalGraph] Attempting FUZZY match validation for: "${explicitExtractionResult}"`);
-        const { data: fuzzyMatches, error: fuzzyRpcError } = await supabase
+        const { data: fuzzyMatches, error: fuzzyRpcError } = await supabaseClient
           .rpc('find_document_by_name', { 
              search_term: explicitExtractionResult, 
              exact_match: false // Allow fuzzy matching
@@ -426,10 +437,8 @@ export async function extractQueryFilters(
       // << FIX: Clear the active filter when __LATEST__ is requested >>
       console.log("[RetrievalGraph] Clearing active_document_filter because __LATEST__ was requested.");
       finalActiveFilter = null; 
-      // explicitFoundFilename = false; // Commented out unused variable assignment
     } else {
        console.log("[RetrievalGraph] Explicit extraction did not find any potential match.");
-       // explicitFoundFilename = false; // Commented out unused variable assignment
     }
   } catch (error) {
     console.error("[RetrievalGraph] Error during explicit filter extraction/validation:", error);
@@ -439,7 +448,6 @@ export async function extractQueryFilters(
       ? { 'metadata.source': existingFilter.source, filterApplied: existingFilter.filterApplied || `Initial: ${existingFilter.source}` }
       : {};
     cleanedQuery = currentQuery; // Revert cleaned query too
-    // explicitFoundFilename = (existingFilter !== null); // Commented out unused variable assignment
     newExplicitFilterSet = false; // Ensure flag is false on error
   }
   
@@ -448,59 +456,57 @@ export async function extractQueryFilters(
   if (finalActiveFilter === null) { 
     console.log("[RetrievalGraph] No active filter after explicit step, trying broad registry lookup...");
     try {
-    const supabaseUrl = process.env.SUPABASE_URL;
-    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!supabaseUrl || !supabaseKey) {
-        throw new Error("Missing Supabase credentials for registry lookup");
+    const supabaseClient = config?.configurable?.supabaseClient as SupabaseClient;
+    if (!supabaseClient) {
+        throw new Error("Missing Supabase client in config for registry lookup");
     }
-    const supabase = createClient(supabaseUrl, supabaseKey);
-      const searchTerms = extractKeyTerms(currentQuery); // Use original query for terms
-      console.log(`[RetrievalGraph] Using terms for registry search: ${searchTerms.join(', ')}`);
-      
-      if (searchTerms.length > 0) {
-        const { data: registryMatches, error: rpcError } = await supabase
-          .rpc('find_document_by_name', { 
-             search_term: searchTerms.join(' '),
-             exact_match: false
-          });
+    const searchTerms = extractKeyTerms(currentQuery); // Use original query for terms
+    console.log(`[RetrievalGraph] Using terms for registry search: ${searchTerms.join(', ')}`);
+    
+    if (searchTerms.length > 0) {
+      const { data: registryMatches, error: rpcError } = await supabaseClient
+        .rpc('find_document_by_name', { 
+           search_term: searchTerms.join(' '),
+           exact_match: false
+        });
 
-        if (rpcError) {
-          console.error("[RetrievalGraph] Registry lookup RPC error:", rpcError);
-        } else if (registryMatches && registryMatches.length > 0) {
-          // ...(Smarter Match Selection logic - simplified) ...
-          const numericIdentifiers = searchTerms.filter(term => /^\d+$/.test(term));
-          let potentialMatches = registryMatches.filter((match: { filename: string }) => 
-            numericIdentifiers.every((num: string) => match.filename.includes(num))
-          );
-          if (potentialMatches.length > 0) {
-            potentialMatches.sort((a: { similarity: number }, b: { similarity: number }) => b.similarity - a.similarity);
-            const bestMatch = potentialMatches[0];
-            const confidence = bestMatch.similarity;
-            const matchedFilename = bestMatch.filename;
-            const CONFIDENCE_THRESHOLD = 0.50;
-            if (confidence >= CONFIDENCE_THRESHOLD) {
-              console.log(`[RetrievalGraph] Registry Match found and above threshold. Setting filter.`);
-              const filterApplied = `Registry Match: ${matchedFilename} (Conf: ${confidence.toFixed(2)})`;
-              finalActiveFilter = { source: matchedFilename, filterApplied: filterApplied }; 
-              queryFilters = { "metadata.source": matchedFilename, filterApplied: filterApplied };
-              newExplicitFilterSet = true; // << Set flag here too if filter is newly set
-            } else { 
-              console.log(`[RetrievalGraph] Registry Match confidence below threshold.`); 
-            }
+      if (rpcError) {
+        console.error("[RetrievalGraph] Registry lookup RPC error:", rpcError);
+      } else if (registryMatches && registryMatches.length > 0) {
+        // ...(Smarter Match Selection logic - simplified) ...
+        const numericIdentifiers = searchTerms.filter(term => /^\d+$/.test(term));
+        let potentialMatches = registryMatches.filter((match: { filename: string }) => 
+          numericIdentifiers.every((num: string) => match.filename.includes(num))
+        );
+        if (potentialMatches.length > 0) {
+          potentialMatches.sort((a: { similarity: number }, b: { similarity: number }) => b.similarity - a.similarity);
+          const bestMatch = potentialMatches[0];
+          const confidence = bestMatch.similarity;
+          const matchedFilename = bestMatch.filename;
+          const CONFIDENCE_THRESHOLD = 0.50;
+          if (confidence >= CONFIDENCE_THRESHOLD) {
+            console.log(`[RetrievalGraph] Registry Match found and above threshold. Setting filter.`);
+            const filterApplied = `Registry Match: ${matchedFilename} (Conf: ${confidence.toFixed(2)})`;
+            finalActiveFilter = { source: matchedFilename, filterApplied: filterApplied }; 
+            queryFilters = { "metadata.source": matchedFilename, filterApplied: filterApplied };
+            newExplicitFilterSet = true; // << Set flag here too if filter is newly set
           } else { 
-            console.log("[RetrievalGraph] No suitable registry match found after filtering."); 
+            console.log(`[RetrievalGraph] Registry Match confidence below threshold.`); 
           }
         } else { 
-          console.log("[RetrievalGraph] No promising matches found in document registry."); 
+          console.log("[RetrievalGraph] No suitable registry match found after filtering."); 
         }
-        }
-      } catch (error) {
-       console.error("[RetrievalGraph] Error during registry lookup:", error);
-       finalActiveFilter = null;
-       queryFilters = {}; // Clear query filters too
-       newExplicitFilterSet = false; // Ensure flag is false on error
-    }
-  } else {
+      } else { 
+        console.log("[RetrievalGraph] No promising matches found in document registry."); 
+      }
+      }
+    } catch (error) {
+     console.error("[RetrievalGraph] Error during registry lookup:", error);
+     finalActiveFilter = null;
+     queryFilters = {}; // Clear query filters too
+     newExplicitFilterSet = false; // Ensure flag is false on error
+  }
+} else {
      console.log("[RetrievalGraph] Skipping registry lookup as a specific filename filter is already active OR __LATEST__ was found explicitly.");
   }
 
@@ -533,19 +539,32 @@ export async function retrieveDocuments(
   console.log(`  Incoming active_document_filter (from state):`, state.active_document_filter);
 
   try {
-    const retriever = await makeRetriever(config);
+    // Get dependencies from config
+    const embeddings = config?.configurable?.embeddings as Embeddings;
+    const supabaseClient = config?.configurable?.supabaseClient as SupabaseClient;
 
-    // Extract filters and potentially refine the query
-    console.log("--- Entering extractQueryFilters ---");
-    // Destructure results from extractQueryFilters, renaming to avoid scope conflicts
+    if (!embeddings || !supabaseClient) {
+      throw new Error("Missing Supabase client or embeddings in config for retrieveDocuments");
+    }
+    
+    // Use getCustomRetriever with injected dependencies
+    const namespace = state.active_document_filter?.source || 'defaultNamespace'; // Example
+    const retriever = await getCustomRetriever(
+      supabaseClient,
+      embeddings,
+      namespace,
+      () => {}, // Placeholder callback
+      () => {}  // Placeholder callback
+    );
+
+    // Pass config down to extractQueryFilters
     const extractedFilters = await extractQueryFilters({ ...state, query: state.query }, config);
     const { 
       queryFilters, 
       cleanedQuery, 
-      active_document_filter: extracted_active_filter, // Use the renamed variable
-      new_explicit_filter_set: extracted_new_filter_flag // Use the renamed variable
+      active_document_filter: extracted_active_filter,
+      new_explicit_filter_set: extracted_new_filter_flag
     } = extractedFilters;
-    console.log("--- Exiting extractQueryFilters ---");
 
     // Prepare options for the retriever
     const retrieverOptions: Record<string, any> = {};
@@ -579,12 +598,12 @@ export async function retrieveDocuments(
     console.log(`[RetrievalGraph]   Query for invoke: \"${cleanedQuery}\"`);
     console.log(`[RetrievalGraph]   Options for invoke:`, retrieverOptions);
 
-    // Use the specific return type defined earlier
-    const retrieverResult = await retriever.invoke(cleanedQuery, retrieverOptions) as RetrieverResultType;
-    // Ensure documents is always an array, even if retrieverResult.documents is null/undefined
-    const relevantDocs = retrieverResult.documents ?? []; 
+    // Invoke retriever and directly assign the result (Document[])
+    const relevantDocs: Document[] = await retriever.invoke(cleanedQuery, retrieverOptions);
+    // const retrieverResult = await retriever.invoke(cleanedQuery, invokeConfig) as RetrieverResultType; // Removed assertion
+    // const relevantDocs = retrieverResult.documents ?? []; // Removed intermediate step
     
-    console.log(`[RetrievalGraph] retriever.invoke returned ${relevantDocs.length} documents.`);
+    console.log(`[RetrievalGraph] Retrieved ${relevantDocs.length} documents.`);
 
     // Log snippets (optional)
     if (relevantDocs.length > 0) {
@@ -734,8 +753,14 @@ async function generateResponse(
   console.log('[RetrievalGraph] Generating response based on retrieved documents');
   
   try {
-    const configuration = ensureAgentConfiguration(config);
-    const model = await loadChatModel(configuration.queryModel);
+    // Get chat model from config
+    const chatModel = config?.configurable?.chatModel as BaseChatModel;
+    if (!chatModel) {
+        throw new Error("Chat model not found in config for generateResponse");
+    }
+    // Removed direct loadChatModel call
+    // const configuration = ensureAgentConfiguration(config);
+    // const model = await loadChatModel(configuration.queryModel);
     
     // Format retrieved documents as a string for the context
     console.log('[RetrievalGraph] Formatting retrieved documents');
@@ -796,7 +821,7 @@ async function generateResponse(
     
     console.log('[RetrievalGraph] Calling LLM for response generation');
     const response = await withTimeout(
-      model.invoke(messages),
+      chatModel.invoke(messages), // Use injected model
       60000, // Increased timeout for complex responses
       'response generation LLM call'
     );
@@ -871,8 +896,14 @@ export async function evaluateRetrievalQuality(
   }
   
   try {
-    const configuration = ensureAgentConfiguration(config);
-    const model = await loadChatModel(configuration.queryModel);
+    // Get chat model from config
+    const chatModel = config?.configurable?.chatModel as BaseChatModel;
+    if (!chatModel) {
+        throw new Error("Chat model not found in config for evaluateRetrievalQuality");
+    }
+    // Removed direct loadChatModel call
+    // const configuration = ensureAgentConfiguration(config);
+    // const model = await loadChatModel(configuration.queryModel);
     
     // Format documents for evaluation
     const formattedDocs = formatDocs(documents, false);
@@ -903,7 +934,7 @@ Response should be valid JSON only.
     // Call the model directly with the prompt
     console.log('[RetrievalGraph] Calling LLM for document quality evaluation');
     const evaluationResponse = await withTimeout(
-      model.invoke(evaluationPrompt),
+      chatModel.invoke(evaluationPrompt), // Use injected model
       30000,
       'retrieval quality evaluation'
     );
@@ -991,8 +1022,14 @@ async function refineQuery(
   console.log('[RetrievalGraph] Refining query to improve retrieval');
   
   try {
-    const configuration = ensureAgentConfiguration(config);
-    const model = await loadChatModel(configuration.queryModel);
+    // Get chat model from config
+    const chatModel = config?.configurable?.chatModel as BaseChatModel;
+    if (!chatModel) {
+        throw new Error("Chat model not found in config for refineQuery");
+    }
+    // Removed direct loadChatModel call
+    // const configuration = ensureAgentConfiguration(config);
+    // const model = await loadChatModel(configuration.queryModel);
     
     const originalQuery = state.originalQuery || state.query;
     const queryToRefine = state.query; // Use the query that failed evaluation
@@ -1033,7 +1070,7 @@ Output only valid JSON.
     
     // Call the model directly with the prompt
     const refinementResponse = await withTimeout(
-      model.invoke(promptContent),
+      chatModel.invoke(promptContent), // Use injected model
       30000,
       'query refinement'
     );
@@ -1221,23 +1258,11 @@ const builder = new StateGraph(
 
 console.log('[RetrievalGraph] Compiling retrieval graph...');
 
-// Initialize the checkpointer
-// const checkpointer = new PostgresSaver(pgConnection);
-const checkpointer = new MemorySaver(); // Use MemorySaver temporarily
+// Initialize the checkpointer using MemorySaver
+const checkpointer = new MemorySaver();
+console.log("[RetrievalGraph] Using MemorySaver for checkpointer.");
 
-// console.log("[RetrievalGraph] Postgres checkpointer configured. Attempting setup...");
-// try {
-//   await checkpointer.setup(); // Ensure tables are created
-//   console.log("[RetrievalGraph] Postgres checkpointer setup completed (or already done).");
-// } catch (error) {
-//   console.error("[RetrievalGraph] Error setting up Postgres checkpointer:", error);
-//   // Decide how to handle setup failure - maybe throw or fallback
-// }
-
-console.log("[RetrievalGraph] Using MemorySaver for checkpointer (temporary).");
-
-// Compile the graph - Ensure setup promise is handled if needed before first use,
-// although compile itself might not strictly require it.
+// Compile the graph with the MemorySaver checkpointer
 export const graph = builder.compile({
     checkpointer: checkpointer,
     // Optional: Define interrupt points if needed
@@ -1246,4 +1271,4 @@ export const graph = builder.compile({
   runName: 'RetrievalGraph'
 });
 
-console.log('[RetrievalGraph] Retrieval graph defined and ready');
+console.log('[RetrievalGraph] Retrieval graph defined and ready with MemorySaver checkpointer');

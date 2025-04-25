@@ -3,10 +3,15 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { v4 as uuidv4 } from 'uuid';
 
+// Imports for DI
+import { createClient } from '@supabase/supabase-js';
+import { OpenAIEmbeddings } from '@langchain/openai';
+import { loadChatModel } from './shared/utils.js';
+
 import {
   addMessageToConversation,
   getMessageHistory,
-  supabase,
+  supabase as supabaseRepoClient, // Renamed to avoid conflict
 } from './supabaseRepo.js';
 
 import { graph as retrievalGraph } from './retrieval_graph/graph.js';
@@ -22,7 +27,14 @@ REQUIRED_ENV_VARS.forEach((k) => {
   if (!process.env[k]) throw new Error(`Missing env var ${k}`);
 });
 
-if (!supabase) throw new Error('Supabase client not initialised');
+// ---------------------------------------------------------------------------
+//  Initialize Dependencies for Injection
+// ---------------------------------------------------------------------------
+const supabaseClient = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
+   auth: { persistSession: false } // Recommended for backend
+});
+const embeddings = new OpenAIEmbeddings();
+const chatModel = loadChatModel(process.env.DEFAULT_QUERY_MODEL || "openai/gpt-4o"); // Load default model
 
 // ---------------------------------------------------------------------------
 //  App setup
@@ -100,7 +112,7 @@ app.post('/conversations/create', async (req: Request, res: Response): Promise<v
     const { title = 'New conversation' } = req.body as { title?: string };
     const threadId = uuidv4();
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseRepoClient
       .from('conversations')
       .insert({ thread_id: threadId, title })
       .select()
@@ -135,19 +147,28 @@ app.post('/chat/invoke', async (req: Request, res: Response): Promise<void> => {
     threadId = threadId ?? uuidv4(); // Assign only if needed and not yet defined
     // res.setHeader('X-Chat-Thread-Id', threadId); // Optional header
 
+    // Use supabaseRepoClient for direct repo operations
     await addMessageToConversation(threadId, { role: 'user', content: userMsg });
-
-    // --- SSE and related logic removed --- 
-
     const history = await getMessageHistory(threadId);
+    
     const graphInput = { query: userMsg, contextMessages: history };
 
+    // Ensure chatModel promise is resolved before passing to config
+    const resolvedChatModel = await chatModel;
+
+    // Construct graph config with injected dependencies
     const graphCfg = {
-      configurable: { thread_id: threadId, ...ensureAgentConfiguration({}) },
-      // No streamMode, no signal needed
+      configurable: { 
+        thread_id: threadId, 
+        ...ensureAgentConfiguration({}),
+        // Injected dependencies:
+        supabaseClient: supabaseClient,
+        embeddings: embeddings,
+        chatModel: resolvedChatModel, 
+      },
     } as const;
 
-    console.log(`[${threadId}] Invoking graph...`);
+    console.log(`[${threadId}] Invoking graph with config:`, JSON.stringify(graphCfg, null, 2)); // Log the config
     const finalState = await (retrievalGraph as any).invoke(graphInput, graphCfg);
     console.log(`[${threadId}] Graph invocation complete.`);
     // console.log('Final State:', JSON.stringify(finalState, null, 2)); // Optional: Log final state
