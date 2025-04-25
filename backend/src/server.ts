@@ -44,11 +44,29 @@ app.use((_req, res, next) => {
   next();
 });
 
-// Updated CORS: Use explicit origin array
+// Updated CORS: Use explicit origin array from environment variable
+const defaultAllowedOrigins = 'https://chatbot-1-sujm.onrender.com,http://localhost:3000';
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || defaultAllowedOrigins).split(',').map(origin => origin.trim());
+
+console.log('[CORS] Allowed Origins:', allowedOrigins); // Log allowed origins for debugging
+
 app.use(cors({
-  origin: ['https://chatbot-1-sujm.onrender.com'], // Explicitly list allowed origins
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests) - needed for some deployment health checks too
+    if (!origin) return callback(null, true);
+    
+    // Check if the origin is in the allowed list
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = `The CORS policy for this site does not allow access from the specified Origin: ${origin}`;
+      console.error('[CORS] Blocked Origin:', origin); // Log blocked origins
+      return callback(new Error(msg), false);
+    }
+    
+    // Origin is allowed
+    return callback(null, true);
+  },
   credentials: true,
-  optionsSuccessStatus: 204
+  optionsSuccessStatus: 204 // Use 204 for OPTIONS preflight success
 }));
 
 app.use(express.json());
@@ -97,7 +115,7 @@ app.post('/conversations/create', async (req: Request, res: Response): Promise<v
 });
 
 // This endpoint is now NON-STREAMING
-app.post('/chat/stream', async (req: Request, res: Response): Promise<void> => {
+app.post('/chat/invoke', async (req: Request, res: Response): Promise<void> => {
   const body = req.body as { messages?: { role: string; content: string }[]; threadId?: string };
   const userMsg: string = body.messages?.at(-1)?.content?.trim() ?? '';
 
@@ -141,10 +159,14 @@ app.post('/chat/stream', async (req: Request, res: Response): Promise<void> => {
         Array.isArray((m as any)?.id) && (m as any).id.at(-1) === 'AIMessage'
     ).pop();
     
-    // Extract content more robustly - check direct content property first
-    const finalContent = lastAssistantMessage?.content ?? 
-                         (lastAssistantMessage as any)?.kwargs?.content ?? 
-                         'Sorry, I could not generate a response.';
+    // Extract content more robustly - target kwargs.content FIRST based on logs
+    let finalContent = 'Sorry, I could not generate a response.'; // Default error
+    
+    if (lastAssistantMessage && (lastAssistantMessage as any).kwargs?.content) {
+        finalContent = (lastAssistantMessage as any).kwargs.content;
+    } else if (lastAssistantMessage?.content) { // Fallback to direct content property if kwargs.content not found
+        finalContent = lastAssistantMessage.content;
+    }
 
     // Send standard JSON response
     console.log(`[${threadId}] Sending response:`, finalContent);
