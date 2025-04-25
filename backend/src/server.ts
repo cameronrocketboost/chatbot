@@ -169,9 +169,23 @@ app.post('/chat/invoke', async (req: Request, res: Response): Promise<void> => {
     }
     // --- END SIMPLIFIED EXTRACTION LOGIC ---
 
-    // Send standard JSON response
+    // --- EXTRACT SOURCES --- 
+    let sourceList: string[] = [];
+    if (Array.isArray(finalState?.documents) && finalState.documents.length > 0) {
+      // Map documents to their source metadata and filter out duplicates/nulls
+      const sources: (string | undefined)[] = finalState.documents.map(
+        (doc: { metadata?: { source?: unknown } }) => 
+          typeof doc.metadata?.source === 'string' ? doc.metadata.source : undefined
+      );
+      const validSources: string[] = sources.filter((source): source is string => typeof source === 'string');
+      sourceList = [...new Set(validSources)];
+    }
+    // --- END EXTRACT SOURCES ---
+
+    // Send standard JSON response including sources
     console.log(`[${threadId}] Sending response:`, finalContent);
-    res.json({ role: 'assistant', content: finalContent });
+    console.log(`[${threadId}] Sources:`, sourceList);
+    res.json({ role: 'assistant', content: finalContent, sources: sourceList });
 
   } catch (err) {
     const error = err as Error;

@@ -23,6 +23,7 @@ interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  sources?: string[];
 }
 
 // Initial View Component
@@ -216,8 +217,13 @@ function ChatInterface() {
         throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
       }
 
-      const assistantResponse: { role: 'assistant'; content: string } = await response.json();
-      const assistantMessage: Message = { id: uuidv4(), ...assistantResponse };
+      const assistantResponse: { role: 'assistant'; content: string; sources?: string[] } = await response.json();
+      const assistantMessage: Message = { 
+        id: uuidv4(), 
+        role: assistantResponse.role,
+        content: assistantResponse.content,
+        sources: assistantResponse.sources
+      };
       setMessages((prev) => [...prev, assistantMessage]);
 
     } catch (err) {
