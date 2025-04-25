@@ -1,201 +1,169 @@
-import express from "express";
-import cors from "cors";
-import dotenv from "dotenv";
-import { v4 as uuidv4 } from "uuid";
+import express, { Request, Response } from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import { v4 as uuidv4 } from 'uuid';
+import { once } from 'node:events';
 
 import {
   addMessageToConversation,
   getMessageHistory,
   supabase,
-} from "./supabaseRepo.js";
+} from './supabaseRepo.js';
 
-import { graph as retrievalGraph } from "./retrieval_graph/graph.js";
-import { ensureAgentConfiguration } from "./retrieval_graph/configuration.js";
-import { RunnableConfig } from "@langchain/core/runnables";
+import { graph as retrievalGraph } from './retrieval_graph/graph.js';
+import { ensureAgentConfiguration } from './retrieval_graph/configuration.js';
 
-/* ---------------------------------------------------------------------------
- * ENVIRONMENT
- * ------------------------------------------------------------------------ */
-dotenv.config({ path: "../.env" });
+dotenv.config({ path: '../.env' });
 
 const REQUIRED_ENV_VARS = [
-  "SUPABASE_URL",
-  "SUPABASE_SERVICE_ROLE_KEY",
-  "OPENAI_API_KEY",
-];
-REQUIRED_ENV_VARS.forEach((key) => {
-  if (!process.env[key]) {
-    throw new Error(`Missing critical environment variable: ${key}`);
-  }
-});
-console.log("All critical environment variables are set.");
+  'SUPABASE_URL',
+  'SUPABASE_SERVICE_ROLE_KEY',
+  'OPENAI_API_KEY',
+] as const;
 
-if (!supabase) {
-  throw new Error("Supabase client failed to initialise in repository.");
+for (const k of REQUIRED_ENV_VARS) {
+  if (!process.env[k]) throw new Error(`Missing env var ${k}`);
 }
 
-/* ---------------------------------------------------------------------------
- * EXPRESS APP BASICS
- * ------------------------------------------------------------------------ */
+if (!supabase) throw new Error('Supabase client not initialised');
+
 const app = express();
-const port = process.env.PORT || 2024;
+const PORT = process.env.PORT ?? 2024;
 
-const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(",") ?? ["*"];
-console.log("Allowed CORS origins:", allowedOrigins);
-
-app.use(
-  cors({
-    origin: allowedOrigins,
-    credentials: true,
-  })
-);
+// ---------- middleware ----------
+const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? '*').split(',');
+app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
 
-/* ---------------------------------------------------------------------------
- * SIMPLE HEALTH‑CHECK ENDPOINTS
- * ------------------------------------------------------------------------ */
-app.get("/", (_req, res) => {
-  res.send("LangGraph Backend is running!");
+// ---------- helper: SSE headers ----------
+function openSSE(res: Response): void {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no', // nginx buffering off
+  });
+  res.flushHeaders();
+}
+
+// ---------- routes ----------
+app.get('/', (_req: Request, res: Response): void => {
+  res.send('LangGraph backend running');
 });
 
-app.post("/chat/threads", async (_req, res) => {
-  try {
-    const threadId = uuidv4();
-    console.log("[POST /chat/threads] Generated new thread ID:", threadId);
-    res.json({ threadId });
-  } catch (err) {
-    const error = err as Error;
-    console.error("[POST /chat/threads] Error:", error);
-    res.status(500).json({ error: error.message });
-  }
+app.post('/chat/threads', (_req: Request, res: Response): void => {
+  const threadId = uuidv4();
+  res.json({ threadId });
 });
 
-app.post("/conversations/create", async (req, res) => {
+app.post('/conversations/create', async (req: Request, res: Response): Promise<void> => {
   try {
-    const title = req.body?.title ?? "New Conversation";
+    const { title = 'New conversation' } = req.body as { title?: string };
     const threadId = uuidv4();
 
     const { data, error } = await supabase
-      .from("conversations")
+      .from('conversations')
       .insert({ thread_id: threadId, title })
-      .select("id, thread_id, title, created_at, updated_at")
+      .select()
       .single();
 
     if (error) throw error;
     res.json({ ...data, threadId });
   } catch (err) {
     const error = err as Error;
-    console.error("[POST /conversations/create] Error:", error);
     res.status(500).json({ error: error.message });
   }
 });
 
-/* ---------------------------------------------------------------------------
- * CHAT STREAM ENDPOINT (SSE – data‑stream v1)
- * ------------------------------------------------------------------------ */
-app.post("/chat/stream", async (req, res) => {
-  console.log("[POST /chat/stream] Request received.");
-
-  const { messages = [], threadId: incomingThreadId } = req.body as {
+/**
+ * Core streaming endpoint
+ */
+app.post('/chat/stream', async (req: Request, res: Response): Promise<void> => {
+  const body = req.body as {
     messages?: { role: string; content: string }[];
     threadId?: string;
   };
 
-  const userMessageContent = messages.at(-1)?.content ?? "";
-  const trimmedContent = userMessageContent.trim();
+  const userMsg = body.messages?.at(-1)?.content?.trim() ?? '';
 
-  /* --- basic validation -------------------------------------------------- */
-  if (!trimmedContent) {
-    return sseError(res, "Message content cannot be empty");
-  }
-  if (trimmedContent.length < 3) {
-    return sseError(res, "Could you finish your question first? 😊");
-  }
-
-  /* --- thread set‑up ------------------------------------------------------ */
-  let threadId = incomingThreadId ?? uuidv4();
-  if (!incomingThreadId) {
-    res.setHeader("X-Chat-Thread-Id", threadId);
+  if (!userMsg) {
+    openSSE(res);
+    res.write(
+      `data:${JSON.stringify({ error: 'Message content cannot be empty' })}\n\ndata:[DONE]\n\n`,
+    );
+    res.end();
+    return;
   }
 
-  await addMessageToConversation(threadId, {
-    role: "user",
-    content: userMessageContent,
-  });
+  if (userMsg.length < 3) {
+    openSSE(res);
+    res.write(
+      `data:${JSON.stringify({ role: 'assistant', content: 'Could you finish your question first? 😊' })}\n\ndata:[DONE]\n\n`,
+    );
+    res.end();
+    return;
+  }
 
-  /* --- prepare SSE headers ----------------------------------------------- */
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-  });
-  res.flushHeaders?.();
+  const threadId = body.threadId ?? uuidv4();
+  res.setHeader('X-Chat-Thread-Id', threadId);
 
-  /* --- heartbeat ---------------------------------------------------------- */
-  let heartbeat: NodeJS.Timeout | null = setInterval(() => {
+  await addMessageToConversation(threadId, { role: 'user', content: userMsg });
+
+  openSSE(res);
+
+  // heartbeat
+  const heartbeat = setInterval(() => {
     if (!res.writableEnded) {
-      res.write(`data: ${JSON.stringify({ type: "heartbeat", t: Date.now() })}\n\n`);
+      const ok = res.write(`:heartbeat ${Date.now()}\n\n`);
+      if (!ok) void res.once('drain', () => {});
     }
   }, 15_000);
 
-  /* --- call LangGraph ----------------------------------------------------- */
+  // AbortController to cancel upstream when client disconnects
+  const ac = new AbortController();
+  const { signal } = ac;
+
+  const cleanup = (): void => {
+    ac.abort();
+    clearInterval(heartbeat);
+  };
+
+  req.on('close', cleanup);
+  req.on('error', cleanup);
+
   try {
     const history = await getMessageHistory(threadId);
+    const graphInput = { query: userMsg, contextMessages: history };
 
-    const graphInput = {
-      query: trimmedContent,
-      contextMessages: history,
+    const graphCfg = {
+      configurable: { thread_id: threadId, ...ensureAgentConfiguration({}) },
+      streamMode: ['messages' as const],
+      signal,
     };
 
-    const baseConfig: RunnableConfig = {} as RunnableConfig;
-    const graphConfig = {
-      configurable: {
-        thread_id: threadId,
-        ...ensureAgentConfiguration(baseConfig),
-      },
-      streamMode: ["messages"] as ("messages" | "values")[],
-    };
-
-    const stream = await retrievalGraph.stream(graphInput, graphConfig);
+    const stream = await retrievalGraph.stream(graphInput, graphCfg as any);
 
     for await (const patch of stream) {
-      if (!("messages" in patch)) continue;
+      if (!('messages' in patch)) continue;
       const last = patch.messages.at(-1);
-      if (last && last.type?.startsWith("AIMessage")) {
-        res.write(`data: ${JSON.stringify(last)}\n\n`);
-      }
+      if (!last || !(last.type as string)?.startsWith('AIMessage')) continue;
+
+      const payload = `data:${JSON.stringify({ role: 'assistant', content: last.content })}\n\n`;
+      const ok = res.write(payload);
+      if (!ok) await once(res, 'drain');
     }
 
-    res.write("data: [DONE]\n\n");
+    res.write('data:[DONE]\n\n');
   } catch (err) {
     const error = err as Error;
-    console.error("[POST /chat/stream] Stream error:", error);
-    res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
-    res.write("data: [DONE]\n\n");
+    res.write(`data:${JSON.stringify({ error: error.message })}\n\ndata:[DONE]\n\n`);
   } finally {
-    if (heartbeat) clearInterval(heartbeat);
+    cleanup();
     res.end();
   }
 });
 
-/* ---------------------------------------------------------------------------
- * HELPERS
- * ------------------------------------------------------------------------ */
-function sseError(res: express.Response, message: string) {
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-  });
-  res.flushHeaders?.();
-  res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
-  res.write("data: [DONE]\n\n");
-  res.end();
-}
-
-/* ---------------------------------------------------------------------------
- * BOOT
- * ------------------------------------------------------------------------ */
-app.listen(port, () => {
-  console.log(`LangGraph server listening on port ${port}`);
+// ---------- start ----------
+app.listen(PORT, () => {
+  console.log(`LangGraph server listening on ${PORT}`);
 });
