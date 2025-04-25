@@ -3,8 +3,8 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { OpenAIEmbeddings, ChatOpenAI } from '@langchain/openai';
 import { SupabaseVectorStore } from '@langchain/community/vectorstores/supabase';
 import { HydeRetriever } from 'langchain/retrievers/hyde';
-import { getCustomRetriever } from '../retrieval'; // REMOVED .js extension
-import { loadChatModel } from '../utils'; // REMOVED .js extension
+import { getCustomRetriever } from '../retrieval.js'; // Import the function to test - USE .js extension
+import { loadChatModel } from '../utils.js'; // Import the actual function type for mocking - USE .js extension
 
 // --- Mock Dependencies ---
 
