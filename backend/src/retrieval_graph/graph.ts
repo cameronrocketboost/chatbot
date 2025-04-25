@@ -28,6 +28,15 @@ import { Document } from "@langchain/core/documents";
 // Define AgentState as an alias for the actual state type
 type AgentState = typeof AgentStateAnnotation.State;
 
+// Define the expected structure for the result of retriever.invoke
+// This might need adjustment based on the actual retriever implementation
+type RetrieverResultType = {
+  documents: Document<Record<string, any>>[];
+  // Include other potential fields returned by your specific retriever if needed
+  // active_document_filter?: { source: string; filterApplied?: string } | null;
+  // new_explicit_filter_set?: boolean;
+};
+
 // Define types for filters to fix "filterApplied" property issues
 /* // REMOVE Unused Interface
 interface DocumentFilters {
@@ -516,13 +525,6 @@ export async function extractQueryFilters(
   return returnValue;
 }
 
-// Define the type for the state update object more explicitly
-type RetrievalStateUpdate = Partial<AgentState> & {
-  documents: Document<Record<string, any>>[]; // Use the specific Document type
-  active_document_filter: { source: string; filterApplied?: string } | null;
-  new_explicit_filter_set: boolean;
-};
-
 /**
  * Retrieves documents based on the query
  */
@@ -530,87 +532,122 @@ export async function retrieveDocuments(
   state: typeof AgentStateAnnotation.State,
   config: RunnableConfig
 ): Promise<Partial<AgentState>> {
-  // << Enhanced State Logging Start >>
-  console.log("\n--- Entering retrieveDocuments ---");
+  console.log("--- Entering retrieveDocuments ---");
   console.log(`  Query: \"${state.query}\"`);
   console.log(`  Original Query: \"${state.originalQuery}\"`);
-  console.log(`  Refinement Count: ${state.refinementCount || 0}`);
-  console.log(`  Incoming active_document_filter (from state):`, JSON.stringify(state.active_document_filter));
-  // << End Enhanced State Logging Start >>
-
-    const retriever = await makeRetriever(config);
-  let documents: Document<Record<string, any>>[] = [];
-  let finalActiveFilter: { source: string; filterApplied?: string } | null = null;
-  let newFilterSet = false; // Default
+  console.log(`  Refinement Count: ${state.refinementCount}`);
+  console.log(`  Incoming active_document_filter (from state):`, state.active_document_filter);
 
   try {
-    // 1. Extract Filters and potentially refine the query string for search
+    const retriever = await makeRetriever(config);
+
+    // Extract filters and potentially refine the query
+    console.log("--- Entering extractQueryFilters ---");
+    // Destructure results from extractQueryFilters, renaming to avoid scope conflicts
+    const extractedFilters = await extractQueryFilters({ ...state, query: state.query }, config);
     const { 
       queryFilters, 
       cleanedQuery, 
-      active_document_filter: filterToSave, 
-      new_explicit_filter_set 
-    } = await extractQueryFilters(state, config);
+      active_document_filter: extracted_active_filter, // Use the renamed variable
+      new_explicit_filter_set: extracted_new_filter_flag // Use the renamed variable
+    } = extractedFilters;
+    console.log("--- Exiting extractQueryFilters ---");
+
+    // Prepare options for the retriever
+    const retrieverOptions: Record<string, any> = {};
     
-    finalActiveFilter = filterToSave; // Store the filter to be saved
-    newFilterSet = new_explicit_filter_set; // Store the flag
+    // Merge the extracted queryFilters (like contentType) into the retriever options
+    if (queryFilters && Object.keys(queryFilters).length > 0) {
+       retrieverOptions.filter = { ...(retrieverOptions.filter || {}), ...queryFilters };
+       console.log(`[RetrievalGraph] Added queryFilters to retriever options:`, queryFilters);
+    }
 
-    // Log parameters before calling
+    // If a specific document source was identified by extractQueryFilters, add it to the filter
+    // Use the renamed variable 'extracted_active_filter'
+    if (extracted_active_filter?.source) {
+      retrieverOptions.filter = { 
+          ...(retrieverOptions.filter || {}), 
+          'metadata.source': extracted_active_filter.source 
+      };
+      // Pass the descriptive filter text if available
+      if (extracted_active_filter.filterApplied) {
+        retrieverOptions.filter.filterApplied = extracted_active_filter.filterApplied; 
+      }
+      console.log(`[RetrievalGraph] Added source filter for: ${extracted_active_filter.source}`);
+    }
+    
+    // Pass the flag indicating if a new explicit filter was just set
+    // Use the renamed variable 'extracted_new_filter_flag'
+    retrieverOptions.new_explicit_filter_set = extracted_new_filter_flag;
+
+    // Call the retriever with the cleaned query and constructed options
     console.log('[RetrievalGraph] Preparing to call retriever.invoke');
-    console.log(`[RetrievalGraph]   Query for invoke: "${cleanedQuery}"`);
-    console.log(`[RetrievalGraph]   Options for invoke:`, JSON.stringify(queryFilters, null, 2)); // Log the actual filters being passed
+    console.log(`[RetrievalGraph]   Query for invoke: \"${cleanedQuery}\"`);
+    console.log(`[RetrievalGraph]   Options for invoke:`, retrieverOptions);
 
-    // Define the expected return type explicitly
-    type RetrieverResultType = {
-      documents: Document<Record<string, any>>[]; // Ensure this matches
-      active_document_filter: { source: string; filterApplied?: string } | null;
-      new_explicit_filter_set: boolean;
-    };
+    // Use the specific return type defined earlier
+    const retrieverResult = await retriever.invoke(cleanedQuery, retrieverOptions) as RetrieverResultType;
+    // Ensure documents is always an array, even if retrieverResult.documents is null/undefined
+    const relevantDocs = retrieverResult.documents ?? []; 
+    
+    console.log(`[RetrievalGraph] retriever.invoke returned ${relevantDocs.length} documents.`);
 
-    // Call the retriever, using explicit type assertion
-    const retrieverResult = await retriever.invoke(cleanedQuery, {
-      ...queryFilters, // Spread the filters here
-      new_explicit_filter_set: newFilterSet // Pass the flag
-    }) as RetrieverResultType; // Assert the type here
-
-    // << FIX: Access documents correctly from the result object >>
-    documents = retrieverResult.documents; // Assign directly, types should match now
-    finalActiveFilter = retrieverResult.active_document_filter; // Get the filter state saved by the retriever
-
-    // Log snippets of actual results
-    if (documents && Array.isArray(documents) && documents.length > 0) {
-      console.log(`[RetrievalGraph] retriever.invoke returned ${documents.length} documents.`);
+    // Log snippets (optional)
+    if (relevantDocs.length > 0) {
       console.log("--- Snippets from retriever.invoke results ---");
-      documents.slice(0, 5).forEach((doc: Document<Record<string, any>>, index: number) => {
-        // Access properties safely, TS should now recognise them
-        const snippet = doc.pageContent?.substring(0, 150).replace(/\n/g, " ") || "[No Content]";
-        console.log(`  [${index}] Source: ${doc.metadata?.source}, Chunk: ${doc.metadata?.chunkIndex}, Strategy: ${doc.metadata?.retrieval?.retrievalStrategy || 'N/A'} => ${snippet}...`);
+      // Add explicit types for doc and index in the forEach callback
+      relevantDocs.slice(0, 5).forEach((doc: Document, index: number) => { 
+        const source = doc.metadata?.source ?? 'Unknown';
+        const chunkIndex = doc.metadata?.chunkIndex ?? 'N/A';
+        const strategy = doc.metadata?.retrieval?.retrievalStrategy ?? 'N/A';
+        const snippet = doc.pageContent.substring(0, 100).replace(/\n/g, ' ') + '...';
+        console.log(`  [${index}] Source: ${source}, Chunk: ${chunkIndex}, Strategy: ${strategy} => ${snippet}`);
       });
       console.log("-----------------------------------------");
     } else {
-      console.log('[RetrievalGraph] retriever.invoke returned undefined or empty documents.');
-      documents = []; // Ensure it's an empty array of the correct type
+        console.log("--- No documents returned by retriever.invoke ---");
     }
 
+    // Update state with retrieved documents and filter info from the extraction step
+    // Use the renamed variables 'extracted_active_filter' and 'extracted_new_filter_flag'
+    const updatedState: Partial<AgentState> = {
+      documents: relevantDocs,
+      active_document_filter: extracted_active_filter, 
+      new_explicit_filter_set: extracted_new_filter_flag, 
+    };
+    
+    console.log("--- Exiting retrieveDocuments Node ---");
+    console.log(`[RetrievalGraph] Documents count: ${relevantDocs.length}`);
+    // Use the correctly scoped variables for logging
+    console.log(`[RetrievalGraph] SAVING active_document_filter:`, extracted_active_filter);
+    console.log(`[RetrievalGraph] New explicit filter set flag: ${extracted_new_filter_flag}`);
+    
+    // If no new explicit filter was set during THIS retrieval step, maintain the existing refinement count
+    // Use the renamed variable 'extracted_new_filter_flag'
+    if (!extracted_new_filter_flag) {
+      updatedState.refinementCount = state.refinementCount;
+      console.log(`[RetrievalGraph] No new explicit filter set, keeping existing refinement count: ${state.refinementCount}`);
+    }
+    
+    return updatedState;
+
   } catch (error: any) {
-    console.error("[RetrievalGraph] Error during document retrieval process:", error);
-    documents = []; // Ensure empty documents on error
-    finalActiveFilter = null; // Also reset filter on error
-    newFilterSet = false; // Reset flag on error too
+      console.error("[RetrievalGraph] Error during document retrieval process:", error);
+      // Return a state update indicating error, keeping other state fields if possible
+      return { 
+        ...state, // Keep existing state where possible
+        documents: [], // Ensure documents is empty on error
+        error: { // Assign an object conforming to the state definition
+          message: `Retrieval failed: ${error.message}`,
+          node: 'retrieveDocuments', // Identify the source of the error
+          timestamp: Date.now(), // Add a timestamp for when the error occurred
+        }, 
+        // Preserve previous filter state on error if possible, otherwise could reset
+        active_document_filter: state.active_document_filter, 
+        // You might want to reset this flag or keep state's flag depending on desired error behavior
+        new_explicit_filter_set: state.new_explicit_filter_set, 
+      };
   }
-
-  // 3. Return the state update
-  console.log("--- Exiting retrieveDocuments Node ---");
-  console.log(`[RetrievalGraph] Documents count:`, documents?.length ?? 0);
-  console.log(`[RetrievalGraph] SAVING active_document_filter:`, JSON.stringify(finalActiveFilter, null, 2));
-  console.log('[RetrievalGraph] New explicit filter set flag:', newFilterSet);
-
-  // Ensure the return type matches AgentStateAnnotation.State updates
-  return {
-    documents: documents, // Return the correctly typed documents array
-    active_document_filter: finalActiveFilter, // Return the filter state
-    new_explicit_filter_set: newFilterSet, // Return the flag
-  } as RetrievalStateUpdate; // Use the explicit update type
 }
 
 // Helper function to extract document-specific key terms from a query
