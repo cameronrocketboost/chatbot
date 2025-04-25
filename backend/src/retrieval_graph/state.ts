@@ -144,6 +144,12 @@ export const AgentStateAnnotation = Annotation.Root({
   new_explicit_filter_set: Annotation<boolean>({
     default: () => false,
     value: (_, update) => update,
+  }),
+  
+  // <<< Add state for intra-document navigation >>>
+  currentDocChunkIndex: Annotation<number | null>({
+      default: () => null,
+      value: (_, update) => update,
   })
 });
 

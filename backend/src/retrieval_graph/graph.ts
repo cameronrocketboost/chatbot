@@ -5,8 +5,8 @@ import { makeRetriever, /* retrieveFullPowerPoint, isPowerPointQuery, */ extract
 import { formatDocs } from './utils.js';
 import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { 
-  RESPONSE_SYSTEM_PROMPT, 
-  ROUTER_SYSTEM_PROMPT,
+  RESPONSE_SYSTEM_PROMPT,
+  // EVALUATION_PROMPT, // <<< Removed unused import
 } from './prompts.js';
 import { RunnableConfig } from '@langchain/core/runnables';
 import {
@@ -24,6 +24,9 @@ import { EventEmitter } from 'events';
 import { MemorySaver } from "@langchain/langgraph";
 import { Document } from "@langchain/core/documents";
 // import { AgentState } from "./state.js"; // Remove this potential incorrect import
+// import { RunnableBranch, RunnablePassthrough } from '@langchain/core/runnables'; // <<< Removed unused imports
+import { StringOutputParser } from '@langchain/core/output_parsers';
+import { ChatPromptTemplate } from '@langchain/core/prompts';
 
 // Define AgentState as an alias for the actual state type
 type AgentState = typeof AgentStateAnnotation.State;
@@ -71,6 +74,14 @@ EventEmitter.defaultMaxListeners = 20;
 // JSON Output:
 // `;
 
+// --- Add new prompt for classification ---
+const CLASSIFIER_SYSTEM_PROMPT = `You are an expert at routing a user query.
+Based on the user query, determine if the user is asking a question that requires retrieving documents ('retrieve') or if it's conversational and can be answered directly ('direct').
+
+Respond ONLY with the word 'retrieve' or 'direct'.
+
+Query: {query}`; 
+
 // Utility function to add timeout to any promise
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, operation: string): Promise<T> {
   let timeoutId: NodeJS.Timeout | undefined;
@@ -91,87 +102,66 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, operation:
   }
 }
 
-async function checkQueryType(
+// --- NEW classifyQuery function ---
+async function classifyQuery(
   state: typeof AgentStateAnnotation.State,
-  config: RunnableConfig,
-): Promise<{
-  route: 'retrieve' | 'direct';
-}> {
-  console.log('[RetrievalGraph] Checking query type for routing');
-  
-  // Quick pattern matching for simple messages that shouldn't trigger retrieval
-  const simpleMessagePatterns = [
-    /^hi+\s*$/i,                 // "hi", "hii", etc.
-    /^hello+\s*$/i,              // "hello", "helloo", etc.
-    /^hey+\s*$/i,                // "hey", "heyy", etc.
-    /^(good\s*)?(morning|afternoon|evening|day)\s*$/i, // greetings
-    /^how\s+(are\s+)?you\s*$/i,  // "how are you"
-    /^what('?s| is)\s+up\s*$/i,  // "what's up", "what is up"
-    /^thanks?(\s+you)?\s*$/i,    // "thank you", "thanks"
-    /^ok(ay)?\s*$/i,             // "ok", "okay"
-    /^yes\s*$/i,                 // "yes"
-    /^no\s*$/i,                  // "no"
-    /^what\s+can\s+you\s+do\s*$/i, // "what can you do"
-    /^help\s*$/i                 // "help"
-  ];
-  
-  // Check if the query matches any simple message pattern
+  config: RunnableConfig
+): Promise<{ route: 'retrieve' | 'direct' }> {
+  console.log("--- Entering classifyQuery Node ---");
   const query = state.query.trim();
+
+  // 1. Simple Regex/Keyword Checks (copied from old checkQueryType)
+  const simpleMessagePatterns = [
+    /^hi+\s*$/i, /^hello+\s*$/i, /^hey+\s*$/i,
+    /^(good\s*)?(morning|afternoon|evening|day)\s*$/i,
+    /^how\s+(are\s+)?you\s*$/i, /^what('?s| is)\s+up\s*$/i,
+    /^thanks?(\s+you)?\s*$/i, /^ok(ay)?\s*$/i,
+    /^yes\s*$/i, /^no\s*$/i,
+    /^what\s+can\s+you\s+do\s*$/i, /^help\s*$/i
+  ];
+
   for (const pattern of simpleMessagePatterns) {
     if (pattern.test(query)) {
-      console.log(`[RetrievalGraph] Detected simple message pattern: "${query}" - using direct route`);
+      console.log(`[Classifier] Detected simple message pattern: "${query}" - routing direct`);
       return { route: 'direct' };
     }
   }
   
-  // If query is very short (1-2 words) and doesn't look like a document query, use direct route
   if (query.split(/\s+/).length <= 2 && !query.includes('.') && !query.match(/pdf|doc|presentation|file|slide/i)) {
-    console.log(`[RetrievalGraph] Short query detected: "${query}" - using direct route`);
-    return { route: 'direct' };
+     console.log(`[Classifier] Short query detected: "${query}" - routing direct`);
+     return { route: 'direct' };
   }
 
+  // 2. LLM Classification (if no simple match)
+  console.log("[Classifier] No simple match, using LLM for classification...");
   try {
     const configuration = ensureAgentConfiguration(config);
-    const model = await loadChatModel(configuration.queryModel);
-    const routingPrompt = ROUTER_SYSTEM_PROMPT;
+    // Use a potentially faster/cheaper model for classification if configured, else default
+    const classifierModel = await loadChatModel(configuration.queryModel, 0); // Temp 0 for classification
+    
+    const classificationChain = ChatPromptTemplate.fromTemplate(CLASSIFIER_SYSTEM_PROMPT)
+      .pipe(classifierModel)
+      .pipe(new StringOutputParser());
 
-    console.log('[RetrievalGraph] Formatting routing prompt');
-    const formattedPrompt = await withTimeout(
-      routingPrompt.invoke({ query: state.query }),
-      10000,
-      'format routing prompt'
+    const result = await withTimeout(
+        classificationChain.invoke({ query: query }),
+        15000, // Shorter timeout for classification
+        'query classification LLM call'
     );
 
-    console.log('[RetrievalGraph] Calling LLM for query type determination');
-    // Get raw text response instead of structured output
-    const response = await withTimeout(
-      model.invoke(formattedPrompt.toString()),
-      30000,
-      'query type determination LLM call'  
-    );
-
-    // Basic parsing of the raw text response
-    const responseContent = response.content.toString().toLowerCase();
-    let route: 'retrieve' | 'direct' = 'retrieve'; // Default to retrieve
-    if (responseContent.includes('direct')) { // Simple check
-      route = 'direct';
-    }
-    console.log(`[RetrievalGraph] Determined route from LLM: ${route}`);
-
+    const route = result.toLowerCase().includes('retrieve') ? 'retrieve' : 'direct';
+    console.log(`[Classifier] LLM determined route: ${route}`);
     return { route };
 
   } catch (error) {
-    console.error('[RetrievalGraph] Error in checkQueryType:', error);
-    
-    // If it's likely a document-related question, use retrieve as fallback
-    if (query.match(/pdf|document|file|presentation|slide|ppt|docx?|read|find/i)) {
-      console.log('[RetrievalGraph] Query appears document-related, defaulting to "retrieve" route');
-      return { route: 'retrieve' };
-    }
-    
-    // Default to direct for error cases, as it's safer than retrieving incorrect documents
-    console.log('[RetrievalGraph] Defaulting to "direct" route due to error');
-    return { route: 'direct' };
+      console.error("[Classifier] Error during LLM classification:", error);
+      // Fallback heuristic (similar to old function)
+      if (query.match(/pdf|document|file|presentation|slide|ppt|docx?|read|find/i)) {
+          console.log('[Classifier] Fallback: Query appears document-related, routing retrieve');
+          return { route: 'retrieve' };
+      }
+      console.log('[Classifier] Fallback: Defaulting to direct route due to error');
+      return { route: 'direct' };
   }
 }
 
@@ -286,26 +276,6 @@ async function answerQueryDirectly(
   }
 }
 
-async function routeQuery(
-  state: typeof AgentStateAnnotation.State,
-): Promise<'retrieveDocuments' | 'directAnswer'> {
-  console.log('[RetrievalGraph] Routing query based on determined type');
-  const route = state.route;
-  if (!route) {
-    console.error('[RetrievalGraph] Route is not set, defaulting to retrieveDocuments');
-    return 'retrieveDocuments';
-  }
-
-  if (route === 'retrieve') {
-    return 'retrieveDocuments';
-  } else if (route === 'direct') {
-    return 'directAnswer';
-  } else {
-    console.error(`[RetrievalGraph] Invalid route: ${route}, defaulting to retrieveDocuments`);
-    return 'retrieveDocuments';
-  }
-}
-
 /**
  * Extract any document-specific filters from the query
  */
@@ -384,55 +354,69 @@ export async function extractQueryFilters(
         throw new Error("Missing Supabase credentials for registry lookup");
       }
       const supabase = createClient(supabaseUrl, supabaseKey);
-      const { data: registryMatches, error: rpcError } = await supabase
+      let validatedMatch = false; // Flag to track if we found a good match
+      
+      // --- Step 1a: Try EXACT match first ---
+      console.log(`[RetrievalGraph] Attempting EXACT match validation for: "${explicitExtractionResult}"`);
+      const { data: exactMatches, error: exactRpcError } = await supabase
         .rpc('find_document_by_name', { 
-           search_term: explicitExtractionResult, // Use the regex result here
-           exact_match: false // Allow fuzzy matching
+           search_term: explicitExtractionResult, 
+           exact_match: true // Force exact match
         });
-
-      if (rpcError) {
-        console.error("[RetrievalGraph] Registry validation RPC error:", rpcError);
-      } else if (registryMatches && registryMatches.length > 0) {
-        // Check confidence of the top match from registry
-        const bestMatch = registryMatches[0];
-        const confidence = bestMatch.similarity;
-        const matchedFilename = bestMatch.filename; // Get the canonical name
-        const CONFIDENCE_THRESHOLD = 0.75; // Increased threshold from 0.15
-
-        if (confidence >= CONFIDENCE_THRESHOLD) {
-          console.log(`[RetrievalGraph] Registry validated explicit match: \"${matchedFilename}\" (Confidence: ${confidence.toFixed(2)})`);
-          // Explicit filename *validated*. OVERRIDE any previous filter.
-          if (!existingFilter || existingFilter.source !== matchedFilename) {
-              console.log(`[RetrievalGraph] Validated explicit filename \"${matchedFilename}\" OVERRIDES existing filter. Resetting refinement count.`);
-              newExplicitFilterSet = true; // Set flag
-          } else {
-              console.log(`[RetrievalGraph] Validated explicit filename \"${matchedFilename}\" matches existing filter. Not resetting count.`);
-              newExplicitFilterSet = false;
-          }
-          const filterApplied = `Explicit/Registry: ${matchedFilename}`;
+        
+      if (!exactRpcError && exactMatches && exactMatches.length > 0) {
+          const matchedFilename = exactMatches[0].filename;
+          console.log(`[RetrievalGraph] EXACT match validated: "${matchedFilename}"`);
+          const filterApplied = `Explicit/Exact: ${matchedFilename}`;
           finalActiveFilter = { source: matchedFilename, filterApplied: filterApplied };
-          cleanedQuery = currentQuery; // Maybe clean based on matchedFilename later? For now, keep original.
+          cleanedQuery = currentQuery; 
           queryFilters = { "metadata.source": matchedFilename, filterApplied: filterApplied };
-          // explicitFoundFilename = true; // Commented out unused variable assignment
+          newExplicitFilterSet = (!existingFilter || existingFilter.source !== matchedFilename);
+          validatedMatch = true;
+      } else {
+          if (exactRpcError) console.error("[RetrievalGraph] Exact registry validation RPC error:", exactRpcError);
+          console.log(`[RetrievalGraph] Exact match failed. Proceeding to fuzzy match validation...`);
+      }
+      
+      // --- Step 1b: Try FUZZY match only if exact match failed ---
+      if (!validatedMatch) {
+        console.log(`[RetrievalGraph] Attempting FUZZY match validation for: "${explicitExtractionResult}"`);
+        const { data: fuzzyMatches, error: fuzzyRpcError } = await supabase
+          .rpc('find_document_by_name', { 
+             search_term: explicitExtractionResult, 
+             exact_match: false // Allow fuzzy matching
+          });
+
+        if (!fuzzyRpcError && fuzzyMatches && fuzzyMatches.length > 0) {
+          const bestMatch = fuzzyMatches[0];
+          const confidence = bestMatch.similarity;
+          const matchedFilename = bestMatch.filename; 
+          const HIGH_CONFIDENCE_THRESHOLD = 0.75; // Threshold for explicit fuzzy match
+
+          if (confidence >= HIGH_CONFIDENCE_THRESHOLD) {
+            console.log(`[RetrievalGraph] FUZZY match validated (High Confidence): "${matchedFilename}" (Confidence: ${confidence.toFixed(2)})`);
+            const filterApplied = `Explicit/Fuzzy: ${matchedFilename}`;
+            finalActiveFilter = { source: matchedFilename, filterApplied: filterApplied };
+            cleanedQuery = currentQuery; 
+            queryFilters = { "metadata.source": matchedFilename, filterApplied: filterApplied };
+            newExplicitFilterSet = (!existingFilter || existingFilter.source !== matchedFilename);
+            validatedMatch = true;
+          } else {
+            // Fuzzy match found but confidence too low for explicit validation
+            console.log(`[RetrievalGraph] Explicit regex match \"${explicitExtractionResult}\" failed fuzzy validation (Confidence: ${confidence.toFixed(2)} < ${HIGH_CONFIDENCE_THRESHOLD}).`);
+          }
         } else {
-          console.log(`[RetrievalGraph] Explicit regex match \"${explicitExtractionResult}\" failed registry validation (Confidence: ${confidence.toFixed(2)} < ${CONFIDENCE_THRESHOLD}).`);
-          // explicitFoundFilename = false; // Commented out unused variable assignment
-          // <<< FIX: Clear the filter if explicit validation fails >>>
-          console.log("[RetrievalGraph] Clearing active filter due to failed explicit validation.");
+            if (fuzzyRpcError) console.error("[RetrievalGraph] Fuzzy registry validation RPC error:", fuzzyRpcError);
+            console.log(`[RetrievalGraph] Explicit regex match \"${explicitExtractionResult}\" not found in registry (fuzzy).`);
+        }
+      }
+      
+      // --- Step 1c: Clear filter if NEITHER exact nor high-confidence fuzzy match found ---
+      if (!validatedMatch) {
+          console.log("[RetrievalGraph] Clearing active filter because no high-confidence explicit match found.");
           finalActiveFilter = null;
           queryFilters = {}; // Also clear query filters
           newExplicitFilterSet = false;
-          // Keep existing filter (or null) // <<< Removed incorrect comment
-        }
-      } else {
-        console.log(`[RetrievalGraph] Explicit regex match \"${explicitExtractionResult}\" not found in registry.`);
-        // explicitFoundFilename = false; // Commented out unused variable assignment
-        // <<< FIX: Clear the filter if explicit match not found in registry >>>
-        console.log("[RetrievalGraph] Clearing active filter because explicit match was not found in registry.");
-        finalActiveFilter = null;
-        queryFilters = {}; // Also clear query filters
-        newExplicitFilterSet = false;
-        // Keep existing filter (or null) // <<< Removed incorrect comment
       }
 
     } else if (explicitExtractionResult === '__LATEST__') {
@@ -493,7 +477,7 @@ export async function extractQueryFilters(
             const bestMatch = potentialMatches[0];
             const confidence = bestMatch.similarity;
             const matchedFilename = bestMatch.filename;
-            const CONFIDENCE_THRESHOLD = 0.75;
+            const CONFIDENCE_THRESHOLD = 0.50;
             if (confidence >= CONFIDENCE_THRESHOLD) {
               console.log(`[RetrievalGraph] Registry Match found and above threshold. Setting filter.`);
               const filterApplied = `Registry Match: ${matchedFilename} (Conf: ${confidence.toFixed(2)})`;
@@ -623,21 +607,22 @@ export async function retrieveDocuments(
     const updatedState: Partial<AgentState> = {
       documents: relevantDocs,
       active_document_filter: extracted_active_filter, 
-      new_explicit_filter_set: extracted_new_filter_flag, 
+      new_explicit_filter_set: extracted_new_filter_flag,
+      currentDocChunkIndex: extracted_active_filter ? 0 : null // Set chunk index based on filter
     };
-    
-    console.log("--- Exiting retrieveDocuments Node ---");
-    console.log(`[RetrievalGraph] Documents count: ${relevantDocs.length}`);
-    // Use the correctly scoped variables for logging
-    console.log(`[RetrievalGraph] SAVING active_document_filter:`, extracted_active_filter);
-    console.log(`[RetrievalGraph] New explicit filter set flag: ${extracted_new_filter_flag}`);
     
     // If no new explicit filter was set during THIS retrieval step, maintain the existing refinement count
     // Use the renamed variable 'extracted_new_filter_flag'
     if (!extracted_new_filter_flag) {
       updatedState.refinementCount = state.refinementCount;
       console.log(`[RetrievalGraph] No new explicit filter set, keeping existing refinement count: ${state.refinementCount}`);
-    }
+    } // Else, refinementCount remains undefined in this update, letting resetRefinementCounter handle it
+    
+    console.log("--- Exiting retrieveDocuments Node ---");
+    console.log(`[RetrievalGraph] Documents count: ${relevantDocs.length}`);
+    // Use the correctly scoped variables for logging
+    console.log(`[RetrievalGraph] SAVING active_document_filter:`, extracted_active_filter);
+    console.log(`[RetrievalGraph] New explicit filter set flag: ${extracted_new_filter_flag}`);
     
     return updatedState;
 
@@ -976,7 +961,6 @@ async function routeRetrievalResult(
 ): Promise<'generateResponse' | 'refineQuery'> {
   console.log('[RetrievalGraph] Routing based on retrieval quality');
   
-  const qualityScore = state.retrievalQuality || 0;
   const refinementCount = state.refinementCount || 0;
   
   // If we've already refined twice, proceed anyway to avoid loops
@@ -985,6 +969,8 @@ async function routeRetrievalResult(
     return 'generateResponse';
   }
   
+  // Only check quality score if refinement limit NOT reached
+  const qualityScore = state.retrievalQuality || 0;
   // Check if quality is good enough
   if (qualityScore >= 6) {
     console.log('[RetrievalGraph] Retrieval quality sufficient, proceeding to response generation');
@@ -1148,6 +1134,47 @@ async function resetRefinementCounterIfNeeded(
   }
 }
 
+// <<< NODE FOR HANDLING NAVIGATION >>>
+async function handleNavigation(
+  state: typeof AgentStateAnnotation.State
+): Promise<typeof AgentStateAnnotation.Update> {
+  console.log("--- Entering handleNavigation Node ---");
+  const query = state.query.toLowerCase().trim();
+  const currentFilter = state.active_document_filter;
+  let currentChunkIndex = state.currentDocChunkIndex;
+
+  // Basic keywords for navigation
+  const nextKeywords = ["next slide", "next page", "go forward"];
+  const prevKeywords = ["previous slide", "previous page", "go back", "last slide"];
+  
+  let updateIndex: number | null = null;
+
+  if (currentFilter && typeof currentChunkIndex === 'number') {
+    // Check for 'next'
+    if (nextKeywords.some(kw => query.includes(kw))) {
+      console.log(`[Navigation] Detected 'next' keyword.`);
+      updateIndex = currentChunkIndex + 1;
+    }
+    // Check for 'previous'
+    else if (prevKeywords.some(kw => query.includes(kw))) {
+      console.log(`[Navigation] Detected 'previous' keyword.`);
+      // Prevent going below 0
+      updateIndex = Math.max(0, currentChunkIndex - 1);
+    }
+  }
+  
+  if (updateIndex !== null) {
+      // TODO: Add check against actual document chunk count if possible?
+      // For now, just update the index optimistically.
+      console.log(`[Navigation] Updating chunk index from ${currentChunkIndex} to ${updateIndex}`);
+      return { currentDocChunkIndex: updateIndex };
+  } else {
+      console.log("[Navigation] No navigation keywords detected or no active document context.");
+      // No change to index
+      return {}; 
+  }
+}
+
 // Create the graph with more detailed logging
 console.log('[RetrievalGraph] Defining retrieval graph...');
 const builder = new StateGraph(
@@ -1158,16 +1185,29 @@ const builder = new StateGraph(
   .addNode('retrieveDocuments', retrieveDocuments)
   .addNode('resetRefinementCounter', resetRefinementCounterIfNeeded)
   .addNode('generateResponse', generateResponse)
-  .addNode('checkQueryType', checkQueryType)
+  .addNode('classifyQuery', classifyQuery)
   .addNode('directAnswer', answerQueryDirectly)
   .addNode('evaluateRetrievalQuality', evaluateRetrievalQuality)
   .addNode('refineQuery', refineQuery)
+  .addNode('handleNavigation', handleNavigation)
   .addEdge(START, 'initializeState')
-  .addEdge('initializeState', 'checkQueryType')
-  .addConditionalEdges('checkQueryType', routeQuery, [
-    'retrieveDocuments',
-    'directAnswer',
-  ])
+  .addEdge('initializeState', 'classifyQuery')
+  .addConditionalEdges('classifyQuery', 
+     // Function to determine branch based on 'route' output
+     (state: AgentState) => {
+         const route = state.route;
+         console.log(`[GraphRouter] Routing based on state.route: ${route}`);
+         // Ensure we only return valid keys for the branches
+         if (route === 'retrieve') return 'retrieve';
+         // Default to 'direct' for null or any other unexpected value
+         return 'direct'; 
+     },
+     {
+       retrieve: 'handleNavigation', 
+       direct: 'directAnswer'
+     }
+   )
+  .addEdge('handleNavigation', 'retrieveDocuments')
   .addEdge('retrieveDocuments', 'resetRefinementCounter')
   .addEdge('resetRefinementCounter', 'evaluateRetrievalQuality')
   .addConditionalEdges(
