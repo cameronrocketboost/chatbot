@@ -204,8 +204,12 @@ const ChatInputForm: React.FC<ChatInputFormProps> = ({ input, handleInputChange,
 function ChatInterface() {
   const { threadId, isLoading: isThreadIdLoading, createAndSetNewThreadId } = useThreadId();
   // Configure backend base URL, default to current origin if env var is missing
-  const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ??
-    (typeof window !== 'undefined' ? window.location.origin : '');
+  if (!process.env.NEXT_PUBLIC_BACKEND_URL) {
+    // This error will be caught by the nearest Error Boundary in production
+    // or by the Next.js error overlay in development.
+    throw new Error('Misconfiguration: NEXT_PUBLIC_BACKEND_URL environment variable is not set.');
+  }
+  const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
 
   const {
     messages,
@@ -220,6 +224,14 @@ function ChatInterface() {
     id: threadId || undefined,
     body: { threadId },
     streamProtocol: 'data', // 👈 parse SSE or 'code' protocol frames
+    // Add fetch options supported by ai@^3.2.0
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    fetch: (url, opts) => fetch(url, {
+      ...opts,
+      keepalive: true,   // Add keepalive
+      cache: 'no-store', // Add cache: no-store
+    }),
   });
 
   const { toast } = useToast();
