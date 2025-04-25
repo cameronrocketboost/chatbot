@@ -1,14 +1,7 @@
 import { ChatPromptTemplate } from '@langchain/core/prompts';
 
-const ROUTER_SYSTEM_PROMPT = ChatPromptTemplate.fromMessages([
-  [
-    'system',
-    "You are a routing assistant. Your job is to determine if a question needs document retrieval or can be answered directly.\n\nRespond with either:\n'retrieve' - if the question requires retrieving documents\n'direct' - if the question can be answered directly AND your direct answer",
-  ],
-  ['human', '{query}'],
-]);
-
-const RESPONSE_SYSTEM_PROMPT = ChatPromptTemplate.fromMessages([
+// System prompt for generating responses based on retrieved content
+export const RESPONSE_SYSTEM_PROMPT = ChatPromptTemplate.fromMessages([
   [
     'system',
     `You are an assistant for question-answering tasks. Use the following pieces of retrieved context to answer the question. 
@@ -31,7 +24,7 @@ const RESPONSE_SYSTEM_PROMPT = ChatPromptTemplate.fromMessages([
 ]);
 
 // New prompt for evaluating retrieval quality
-const EVALUATION_PROMPT = ChatPromptTemplate.fromMessages([
+export const EVALUATION_PROMPT = ChatPromptTemplate.fromMessages([
   [
     'system',
     `You are a retrieval quality evaluator. Your job is to determine if the retrieved documents effectively answer the user's query.
@@ -58,40 +51,3 @@ const EVALUATION_PROMPT = ChatPromptTemplate.fromMessages([
   ],
   ['human', '{query}'],
 ]);
-
-// New prompt for refining the query
-const QUERY_REFINEMENT_PROMPT = ChatPromptTemplate.fromMessages([
-  [
-    'system',
-    `You are a query refinement specialist. Your job is to reformulate the user's query to improve document retrieval results.
-
-    **Original Query:**
-    {original_query}
-
-    **Current Retrieval Results:**
-    {current_docs}
-
-    **Refinement Count:** {refinement_count}
-
-    **Instructions:**
-    1. Analyze why the current retrieval results might be inadequate.
-    2. Reformulate the query to be more specific, using synonyms or alternative phrasing.
-    3. If the original query mentions a document name, ensure it's preserved but try alternative formulations.
-    4. If this is the second refinement attempt or more, try a more dramatic reformulation.
-    5. Keep the refined query concise (1-2 sentences) and focused on the original information need.
-    6. Output a JSON with:
-       - "refined_query": The reformulated query
-       - "reasoning": Brief explanation of your refinement strategy
-    
-    Output only valid JSON.
-    `,
-  ],
-  ['human', 'Please refine this query to improve retrieval results.'],
-]);
-
-export { 
-  ROUTER_SYSTEM_PROMPT, 
-  RESPONSE_SYSTEM_PROMPT,
-  EVALUATION_PROMPT,
-  QUERY_REFINEMENT_PROMPT
-};
