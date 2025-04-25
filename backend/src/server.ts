@@ -162,13 +162,17 @@ app.post('/chat/stream', async (req: Request, res: Response): Promise<void> => {
       console.log('--- STREAM PATCH RECEIVED ---');
       console.log('Patch:', JSON.stringify(patch, null, 2)); // Log the raw patch
 
-      if (!('messages' in patch)) {
-        console.log('Patch has no messages property, skipping.');
+      // Corrected check for LangGraph stream format: ["messages", [message, metadata]]
+      if (!Array.isArray(patch) || patch.length !== 2 || patch[0] !== 'messages' || !Array.isArray(patch[1])) {
+        console.log('Patch is not in the expected ["messages", [...]] format, skipping.');
         continue;
       }
-      const last = patch.messages.at(-1);
-      console.log('Last message in patch:', JSON.stringify(last, null, 2)); // Log the last message
 
+      const messagesArray = patch[1];
+      const last = messagesArray.at(-1); // Get last item from the inner array
+      console.log('Last message object in patch array:', JSON.stringify(last, null, 2)); // Log the last message
+
+      // Extract content from .content (full message) or .delta (chunk)
       const text = (last as any)?.content ?? (last as any)?.delta ?? '';
       console.log('Extracted text:', text); // Log extracted text
 
