@@ -200,7 +200,7 @@ function ChatInterface() {
     setError(null);
 
     try {
-      const response = await fetch(`${BACKEND_URL}/chat/stream`, { // Still using /chat/stream endpoint name
+      const response = await fetch(`${BACKEND_URL}/chat/invoke`, { // Updated endpoint name
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         // Include credentials if your backend CORS requires it
