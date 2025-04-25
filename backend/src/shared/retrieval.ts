@@ -17,7 +17,7 @@ import {
 import { BaseCallbackHandler } from '@langchain/core/callbacks/base';
 import { SupabaseVectorStore } from '@langchain/community/vectorstores/supabase'; // Add SupabaseVectorStore import
 // @ts-ignore
-import { loadChatModel } from '../utils/loadChatModel.js'; // Add .js extension and ts-ignore
+import { loadChatModel } from '../utils'; // REMOVED .js extension
 
 // Removed unused MetadataFilter type definition
 
