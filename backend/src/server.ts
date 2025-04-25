@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { v4 as uuidv4 } from 'uuid';
 import { once } from 'node:events';
+import { AIMessage, AIMessageChunk } from '@langchain/core/messages';
 
 import {
   addMessageToConversation,
@@ -161,9 +162,20 @@ app.post('/chat/stream', async (req: Request, res: Response): Promise<void> => {
     for await (const patch of stream as any) {
       if (!('messages' in patch)) continue;
       const last = patch.messages.at(-1);
-      if (!last || typeof last.type !== 'string' || !last.type.startsWith('AIMessage')) continue;
+      // if (!last || typeof last.type !== 'string' || !last.type.startsWith('AIMessage')) continue;
 
-      const ok = res.write(`data:${JSON.stringify({ role: 'assistant', content: last.content })}\n\n`);
+      // Use instanceof for reliable type checking
+      if (!(last instanceof AIMessage || last instanceof AIMessageChunk)) continue;
+
+      // Extract content from .content (full message) or .delta (chunk)
+      const text = ('content' in last ? last.content : (last as any).delta) ?? '';
+      if (!text) continue; // Skip empty chunks/messages
+
+      // const ok = res.write(`data:${JSON.stringify({ role: 'assistant', content: last.content })}\n\n`);
+      const ok = res.write(`data:${JSON.stringify({ role: 'assistant', content: text })}\n\n`);
+      // Explicitly flush to ensure chunk is sent immediately
+      // Note: If this causes TS errors again despite disabled compression, cast might be needed: (res as any).flush();
+      // res.flush?.(); // Removed: Unnecessary with Content-Encoding: identity and causes TS errors
       if (!ok) await once(res, 'drain');
     }
 
