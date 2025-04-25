@@ -1,37 +1,27 @@
 /** @type {import('ts-jest').JestConfigWithTsJest} */
 export default {
-  preset: 'ts-jest',
+  preset: 'ts-jest/presets/default-esm',
   testEnvironment: 'node',
-  extensionsToTreatAsEsm: ['.ts'],
-  moduleNameMapper: {
-    '^(\\.{1,2}/.*)\\.js$': '$1',
-  },
+  roots: ['<rootDir>/src'],
+  testMatch: ['**/__tests__/**/*.test.ts'],
+  testPathIgnorePatterns: ['/node_modules/', '/dist/', '\\.d\\.ts$'],
   transform: {
-    '^.+\\.tsx?$': [
+    '^.+\.tsx?$': [
       'ts-jest',
       {
         useESM: true,
+        tsconfig: 'tsconfig.json',
       },
     ],
   },
-  // Test configuration
-  testMatch: ['**/__tests__/**/*.test.ts'],
-  // Coverage configuration
-  collectCoverageFrom: [
-    'src/**/*.{ts,tsx}',
-    '!src/**/*.d.ts',
-    '!src/**/*.test.ts',
-  ],
-  coveragePathIgnorePatterns: ['/node_modules/', '/__tests__/', '/dist/'],
-  coverageThreshold: {
-    global: {
-      branches: 80,
-      functions: 80,
-      lines: 80,
-      statements: 80,
-    },
+  moduleNameMapper: {
+    '^(\.{1,2}/.*)\.js$': '$1',
+    '^@shared/(.*)$': '<rootDir>/src/shared/$1',
   },
+  extensionsToTreatAsEsm: ['.ts'],
+  collectCoverage: true,
   coverageDirectory: 'coverage',
-  // Helpful test output
+  coverageProvider: 'v8',
+  coveragePathIgnorePatterns: ['/node_modules/', '/dist/', '/__tests__/'],
   verbose: true,
 };

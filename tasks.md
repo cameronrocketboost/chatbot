@@ -497,3 +497,37 @@ After reviewing the codebase, there are several issues with the document retriev
   - Updated short message guard (`length < 2`) to use the `send()` helper and signal `[DONE]` immediately.
 - Removed unused `sendSSE` function that was generating TypeScript warning (6133).
 - Fixed SSE stream termination by changing all instances of `data: "[DONE]"\n\n` (with quotes) to `data: [DONE]\n\n` (without quotes) to match the expected format for Vercel AI SDK and other clients.
+
+## Robustness Enhancements (To Do)
+
+- **#3 Enable HyDE for "broad" questions:** Wrap retriever with LangChain's HydeRetriever template so a hypothetical doc embedding seeds the search. (Outcome: +10-30 % recall on abstract or high-level questions).
+- **#4 Hybrid search (BM25 ∪ Vectors):** In Supabase, run pg_vector cosine search and full-text ts_rank on the same call; merge results, then re-rank. (Outcome: Handles edge-cases where embeddings miss keyword matches ("ISO-9001", "§4.3")).
+- **#5 Cross-encoder re-ranking of top-k:** After the first 20 hits, apply a MiniLM or Cohere reranker (CPU or small GPU) before passing to the LLM. (Outcome: Sharper top-5 precision; lets users ask "show me the key risks" and get the exact slide).
+- **#6 Smaller, overlapped chunks:** Re-embed docs at 400 tokens with 15 % overlap (Chroma & Unstract findings). (Outcome: Better retrieval for answers split across pages; lower orphan risk. Requires re-processing existing docs).
+- **#7 Matryoshka (adaptive-slice) embeddings:** Store both 768-d and 128-d projections; query short vectors first, then widen for final rerank. (Outcome: 2-5× faster Supabase queries without sacrificing accuracy. Requires re-processing existing docs).
+
+## Completed
+
+- **#10 Enhance Document Identification:** Prioritized exact matches, increased explicit fuzzy confidence threshold (0.75), clear filter on validation fail.
+- **#9 Implement Stateful Navigation:** Added `currentDocChunkIndex` to state, added node to handle navigation keywords (basic index update only for now).
+- **#8 Strengthen Loop Guard:** Enforced max 2 refinements in `routeRetrievalResult`.
+- **#2 Improve Query Classification:** Replaced custom LLM router with regex + simple LLM classification chain.
+- **Fix Source Display:** Implemented backend logic to send source filenames and frontend logic in `ChatMessage` to display them.
+- **Fix OpenAI API Key Error:** Resolved 401 errors by ensuring correct API key is used in the deployed backend environment.
+- **Fix Response Extraction:** Corrected logic in `server.ts` to reliably extract assistant message content from graph state.
+
+# Session Summary (YYYY-MM-DD HH:MM)
+
+*   **Implemented HydeRetriever:**
+    *   Updated `shared/retrieval.ts` to use `HydeRetriever` from `langchain/retrievers/hyde`.
+    *   Resolved package dependency issues by adding `langchain` to `package.json` and using `resolutions` for `@langchain/core`.
+    *   Corrected `HydeRetriever` instantiation to use `vectorStore` property with a `SupabaseVectorStore` instance.
+*   **Refactored Dependency Injection:**
+    *   Modified `ingestion_graph/graph.ts` and `retrieval_graph/graph.ts` nodes to receive `supabaseClient`, `embeddings`, and `chatModel` via `config.configurable`.
+    *   Updated `server.ts` to initialize dependencies once and inject them into graph configurations during invocation.
+*   **Addressed Type Errors & Linter Warnings:**
+    *   Fixed various import errors (e.g., `PostgresSaver`, `chunkDocument`).
+    *   Resolved type mismatches (e.g., `RetrieverResultType`, `lc_serializable`).
+    *   Cleaned up unused variables, functions, and imports across multiple files (`retrieval.ts`, graph files).
+*   **Updated Checkpointer (Temporary):**
+    *   Reverted `retrieval_graph` checkpointer to `MemorySaver` due to persistent `PostgresSaver` import issues (root cause likely version specific).

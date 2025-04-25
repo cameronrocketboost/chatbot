@@ -7,7 +7,7 @@ import {
 import { BaseMessage } from '@langchain/core/messages';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { Embeddings } from '@langchain/core/embeddings';
-import { BaseLanguageModel } from '@langchain/core/language_models/base';
+// import { BaseLanguageModel } from '@langchain/core/language_models/base'; // Removed unused import
 import { Document } from '@langchain/core/documents'; // Ensure this import exists
 import { HydeRetriever } from 'langchain/retrievers/hyde';
 // import { BaseRetrieverInterface } from '@langchain/core/retrievers'; // Removed unused import
@@ -33,11 +33,11 @@ export async function getCustomRetriever(
   supabaseClient: SupabaseClient,
   embeddings: Embeddings,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  namespace: string,
+  _namespace: string, // Prefix with _ to indicate unused parameter
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  retrievalStartCallback: RetrievalStartCallback, // Keep parameters even if unused internally
+  _retrievalStartCallback: RetrievalStartCallback, // Prefix with _
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  retrievalEndCallback: RetrievalEndCallback,     // Keep parameters even if unused internally
+  _retrievalEndCallback: RetrievalEndCallback,     // Prefix with _
 ): Promise<HydeRetriever> { // Return HydeRetriever type
   // Instantiate the LLM for HyDE. Use a temperature of 0 for factual generation.
   // TODO: Make the model name configurable
@@ -189,7 +189,7 @@ export async function createRagChain(
   const conversationalRetrievalChain = new RunnableWithMessageHistory({
     runnable: retrievalChain,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    getMessageHistory: (sessionId: string) => chatHistory, // Added eslint disable for sessionId
+    getMessageHistory: (_sessionId: string) => chatHistory, // Prefix sessionId with _
     inputMessagesKey: 'question',
     historyMessagesKey: 'chat_history',
   });
