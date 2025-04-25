@@ -160,22 +160,34 @@ app.post('/chat/stream', async (req: Request, res: Response): Promise<void> => {
     const stream = await (retrievalGraph as any).stream(graphInput, graphCfg);
 
     for await (const patch of stream as any) {
-      if (!('messages' in patch)) continue;
+      console.log('--- STREAM PATCH RECEIVED ---');
+      console.log('Patch:', JSON.stringify(patch, null, 2)); // Log the raw patch
+
+      if (!('messages' in patch)) {
+        console.log('Patch has no messages property, skipping.');
+        continue;
+      }
       const last = patch.messages.at(-1);
+      console.log('Last message in patch:', JSON.stringify(last, null, 2)); // Log the last message
 
-      // Use instanceof for reliable type checking
-      // if (!(last instanceof AIMessage || last instanceof AIMessageChunk)) continue; // Removed: Check properties directly
-
-      // Extract content from .content (full message) or .delta (chunk)
-      // More robust check: access properties directly, handle potential undefined
       const text = (last as any)?.content ?? (last as any)?.delta ?? '';
-      if (!text) continue; // Skip empty chunks/messages
+      console.log('Extracted text:', text); // Log extracted text
 
-      const ok = res.write(`data:${JSON.stringify({ role: 'assistant', content: text })}\n\n`);
-      // Explicitly flush to ensure chunk is sent immediately
-      // Note: If this causes TS errors again despite disabled compression, cast might be needed: (res as any).flush();
-      // res.flush?.(); // Removed: Unnecessary with Content-Encoding: identity and causes TS errors
-      if (!ok) await once(res, 'drain');
+      if (!text) {
+        console.log('No text extracted, skipping write.');
+        continue;
+      }
+
+      console.log('>>> WRITING DATA:', text); // Log before writing
+      const dataToWrite = `data:${JSON.stringify({ role: 'assistant', content: text })}\n\n`;
+      const ok = res.write(dataToWrite);
+      console.log('Write successful:', ok); // Log write result
+
+      if (!ok) {
+        console.log('Write buffer full, waiting for drain...');
+        await once(res, 'drain');
+        console.log('Drain event received.');
+      }
     }
 
     res.write('data:[DONE]\n\n');
