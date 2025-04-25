@@ -34,20 +34,36 @@ const PORT: number = Number(process.env.PORT ?? 2024);
 // ---------------------------------------------------------------------------
 //  Middleware
 // ---------------------------------------------------------------------------
-const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? '*').split(',');
-app.use(cors({ origin: allowedOrigins, credentials: true }));
+
+// Disable ETag generation to prevent 304 responses which can interfere with streaming
+app.disable('etag');
+
+// Disable compression (ensure Content-Encoding is identity)
+// This prevents potential buffering by proxies (like Render's) that might apply gzip
+app.use((_req, res, next) => {
+  res.setHeader('Content-Encoding', 'identity');
+  next();
+});
+
+// Updated CORS: Use explicit origin array
+app.use(cors({
+  origin: ['https://chatbot-1-sujm.onrender.com'], // Explicitly list allowed origins
+  credentials: true,
+  optionsSuccessStatus: 204
+}));
+
 app.use(express.json());
 
 // ---------------------------------------------------------------------------
 //  Helper: open SSE connection
 // ---------------------------------------------------------------------------
-function openSSE(res: Response): void {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
+function openSSE(res: Response, origin: string): void {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // nginx-style buffering off
+  res.setHeader('Access-Control-Allow-Origin', origin); // 🔥 CORS for the stream
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.flushHeaders();
 }
 
@@ -84,16 +100,19 @@ app.post('/conversations/create', async (req: Request, res: Response): Promise<v
 app.post('/chat/stream', async (req: Request, res: Response): Promise<void> => {
   const body = req.body as { messages?: { role: string; content: string }[]; threadId?: string };
   const userMsg: string = body.messages?.at(-1)?.content?.trim() ?? '';
+  const origin = req.headers.origin ?? '*'; // Get origin for SSE
 
   // Guard clauses -----------------------------------------------------------
   if (!userMsg) {
-    openSSE(res);
+    // openSSE(res);
+    openSSE(res, origin); // Pass origin
     res.write(`data:${JSON.stringify({ error: 'Message content cannot be empty' })}\n\ndata:[DONE]\n\n`);
     res.end();
     return;
   }
   if (userMsg.length < 3) {
-    openSSE(res);
+    // openSSE(res);
+    openSSE(res, origin); // Pass origin
     res.write(`data:${JSON.stringify({ role: 'assistant', content: 'Could you finish your question first? 😊' })}\n\ndata:[DONE]\n\n`);
     res.end();
     return;
@@ -104,15 +123,19 @@ app.post('/chat/stream', async (req: Request, res: Response): Promise<void> => {
 
   await addMessageToConversation(threadId, { role: 'user', content: userMsg });
 
-  openSSE(res);
+  // openSSE(res);
+  openSSE(res, origin); // Pass origin
 
   // Heart‑beat keep‑alive ----------------------------------------------------
   const heartbeat = setInterval((): void => {
     if (!res.writableEnded) {
-      const ok = res.write(`:heartbeat ${Date.now()}\n\n`);
+      // const ok = res.write(`:heartbeat ${Date.now()}\n\n`);
+      const ok = res.write(':ping\n\n'); // Change payload
+      // res.flush?.(); // Explicitly flush - Removed due to type error
       if (!ok) void res.once('drain', () => {});
     }
-  }, 15_000);
+  // }, 15_000);
+  }, 25_000); // Change interval
 
   // Abort upstream on disconnect -------------------------------------------
   const ac = new AbortController();
