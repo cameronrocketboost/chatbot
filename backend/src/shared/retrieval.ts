@@ -79,6 +79,7 @@ type ConversationalRetrievalChainInput = {
   question: string;
   namespace: string; // Add namespace here
   callbacks?: BaseCallbackHandler[]; // Add callbacks here
+  queryFilters?: Record<string, any>; // ADD queryFilters HERE
 };
 
 // Function to create the retrieval chain
@@ -140,12 +141,13 @@ export async function createRetrievalChain(
   // Placeholder - this needs to be correctly implemented:
   const conversationalRetrievalChain = RunnableSequence.from([
     {
-      // Pass question, chat_history, namespace, and callbacks through
+      // Pass question, chat_history, namespace, callbacks, and queryFilters through
       question: (input: ConversationalRetrievalChainInput) => input.question,
       chat_history: (input: ConversationalRetrievalChainInput) =>
         input.chat_history,
       namespace: (input: ConversationalRetrievalChainInput) => input.namespace,
       callbacks: (input: ConversationalRetrievalChainInput) => input.callbacks, // Pass callbacks
+      queryFilters: (input: ConversationalRetrievalChainInput) => input.queryFilters, // Pass queryFilters
     },
     {
       // Retrieve documents using the dynamically configured retriever
@@ -153,15 +155,23 @@ export async function createRetrievalChain(
         question: string;
         namespace: string;
         callbacks?: BaseCallbackHandler[]; // Receive callbacks
+        queryFilters?: Record<string, any>; // Receive queryFilters
       }) => {
-         // Pass callbacks in RunnableConfig
-         const config: RunnableConfig = { callbacks: input.callbacks };
+         // Pass callbacks AND queryFilters in RunnableConfig
+         const config: RunnableConfig = { 
+           callbacks: input.callbacks,
+           // Add the filter to the configurable section
+           configurable: {
+            filter: input.queryFilters
+           }
+         }; 
         const namespaceRetriever = await getRetrieverForNamespace(input.namespace, config);
-        // Invoke the retriever with the question and the config containing callbacks
+        // Invoke the retriever with the question and the config containing callbacks AND filter
         return namespaceRetriever.invoke(input.question, config);
       },
       question: (input: any) => input.question, // Pass question through - Added any type
       chat_history: (input: any) => input.chat_history, // Pass chat_history through - Added any type
+      // We don't need to pass queryFilters further down the chain usually
     },
     // ... rest of the chain (e.g., condense question, generate answer) ...
     // Make sure subsequent steps correctly receive 'docs', 'question', 'chat_history'
