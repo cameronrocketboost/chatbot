@@ -2,62 +2,27 @@
 
 import type React from 'react';
 import { useRouter } from 'next/navigation';
+import { v4 as uuidv4 } from 'uuid';
 
 import { useToast } from '@/hooks/use-toast';
-import { useRef, useCallback, Suspense, useLayoutEffect, useMemo } from 'react';
+import { useRef, useCallback, Suspense, useLayoutEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ArrowUp, Loader2, UploadCloud, Info, Search, FileText, Filter } from 'lucide-react';
 import { ExamplePrompts } from '@/components/example-prompts';
 import { ChatMessage } from '@/components/chat-message';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { type Message as AIMessage } from 'ai/react';
 import type { JSONValue } from 'ai';
 import { UploadProgress } from '@/components/upload-progress';
 import { useThreadId } from '@/hooks/useThreadId';
 import { ErrorBanner } from '@/components/error-banner';
 import { isChatMessage } from '@/utils/chatUtils';
-import { useChat } from 'ai/react';
 
-// Define a specific type for thinking annotations
-type ThinkingAnnotation = { type: 'thinking'; [k: string]: JSONValue };
-
-// Define custom Message type that extends AIMessage
-interface Message extends AIMessage {
-  thinking?: string;
-  sources?: any[];
-  stage?: string;
-  annotations?: (JSONValue | ThinkingAnnotation)[];
-}
-
-// Define expected polling response structure
-interface IngestStatusResponse {
-  status: 'running' | 'success' | 'failed' | 'canceled' | string;
-  isComplete: boolean;
-  finalStatus: string | null;
-  processedFiles?: {
-    success: number;
-    skipped: number;
-    skippedFiles: string[];
-    total: number;
-  };
-  progress?: {
-    percentComplete: number;
-    currentStage: string;
-    processingFile: string | null;
-    estimatedTimeRemaining: string | null;
-  } | null;
-  error?: string | null;
-  timing?: {
-    startTime: string;
-    endTime: string | null;
-    durationMs: number | null;
-  };
-}
-
-interface PollingResponse {
-  status: 'pending' | 'success' | 'failure';
-  error?: string;
+// Define custom Message type locally
+interface Message {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
 }
 
 // Initial View Component
@@ -203,67 +168,97 @@ const ChatInputForm: React.FC<ChatInputFormProps> = ({ input, handleInputChange,
 // Chat Interface Component
 function ChatInterface() {
   const { threadId, isLoading: isThreadIdLoading, createAndSetNewThreadId } = useThreadId();
-  // Configure backend base URL, default to current origin if env var is missing
+
+  // Ensure backend URL env var is set
   if (!process.env.NEXT_PUBLIC_BACKEND_URL) {
-    // This error will be caught by the nearest Error Boundary in production
-    // or by the Next.js error overlay in development.
     throw new Error('Misconfiguration: NEXT_PUBLIC_BACKEND_URL environment variable is not set.');
   }
   const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
 
-  const {
-    messages,
-    input,
-    handleInputChange,
-    handleSubmit,
-    isLoading: isChatLoading,
-    error,
-    append,
-  } = useChat({
-    api: `${BACKEND_URL}/chat/stream`,
-    id: threadId || undefined,
-    body: { threadId },
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-  });
-
+  // --- State Management --- 
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
   const { toast } = useToast();
 
+  // --- Send Message Function --- 
+  const sendMessage = async (content: string) => {
+    if (!threadId) {
+      toast({ variant: 'destructive', title: 'Error', description: 'Cannot send message: No active chat thread.' });
+      return;
+    }
+    if (content.trim().length < 3) {
+      toast({ variant: 'destructive', title: 'Error', description: 'Message must be at least 3 characters long.' });
+      return;
+    }
+
+    const userMessage: Message = { id: uuidv4(), role: 'user', content };
+    setMessages((prev) => [...prev, userMessage]);
+    setInput(''); // Clear input after adding user message
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/chat/stream`, { // Still using /chat/stream endpoint name
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // Include credentials if your backend CORS requires it
+        // credentials: 'include', 
+        body: JSON.stringify({
+          messages: [...messages, userMessage], // Send history including new message
+          threadId: threadId,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: 'Failed to parse error response' }));
+        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+      }
+
+      const assistantResponse: { role: 'assistant'; content: string } = await response.json();
+      const assistantMessage: Message = { id: uuidv4(), ...assistantResponse };
+      setMessages((prev) => [...prev, assistantMessage]);
+
+    } catch (err) {
+      console.error('Failed to send message:', err);
+      setError(err as Error);
+      toast({ variant: 'destructive', title: 'Error', description: (err as Error).message || 'Failed to get response from server.' });
+      // Optional: Remove the user message if the request failed?
+      // setMessages(prev => prev.slice(0, -1)); 
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // --- Handle Input Change --- 
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setInput(e.target.value);
+  };
+
+  // --- Handle Form Submit --- 
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    sendMessage(input);
+  };
+
   // clicking an example prompt just re-uses the built-in setter
-  const onExampleClick = (prompt: string) => handleInputChange({ target: { value: prompt } } as any);
+  const onExampleClick = (prompt: string) => setInput(prompt);
 
-  const isOverallLoading = isChatLoading || isThreadIdLoading;
-  const typedMessages = messages as Message[];
+  const isOverallLoading = isLoading || isThreadIdLoading;
 
-  // --- Suggestion #4: Memoize message filtering --- 
-  const thinkingMessageIndex = useMemo(() => {
-    // Add null/undefined check for annotations
-    return typedMessages.findIndex(msg => 
-      msg.annotations?.some((ann): ann is ThinkingAnnotation => 
-        typeof ann === 'object' && ann !== null && !Array.isArray(ann) && 'type' in ann && ann.type === 'thinking'
-      )
-    );
-  }, [typedMessages]);
-
-  const messagesToRender = useMemo(() => {
-    return typedMessages
-      .filter(isChatMessage)
-      .filter((_msg, index) => 
-        (thinkingMessageIndex === -1 || index < thinkingMessageIndex)
-      );
-  }, [typedMessages, thinkingMessageIndex]);
-
-  // --- Suggestion #5: Improve Scrolling --- 
+  // Scrolling Logic
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  // Use useLayoutEffect for scrolling to avoid flickering
   useLayoutEffect(() => {
-    // Scroll to bottom only if the ref is attached
-    messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' }); 
-    // Using 'auto' might be smoother than 'smooth' during rapid updates
-  }, [messagesToRender]); // Scroll when the rendered messages change
+    messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+  }, [messages]);
 
+  // Handle New Chat
   const handleNewChat = useCallback(async () => {
-    // Implementation of handleNewChat
+    await createAndSetNewThreadId();
+    setMessages([]); // Clear messages on new chat
+    setError(null);
+    setInput('');
   }, [createAndSetNewThreadId]);
 
   return (
@@ -273,16 +268,16 @@ function ChatInterface() {
         {isThreadIdLoading && (
           <div className="flex justify-center items-center h-full"><Loader2 className="h-8 w-8 animate-spin text-sladen-teal" /></div>
         )}
-        {!isThreadIdLoading && messagesToRender.length === 0 && !isChatLoading && (
+        {!isThreadIdLoading && messages.length === 0 && !isLoading && (
           <InitialChatView onExampleClick={onExampleClick} />
         )}
-        {!isThreadIdLoading && messagesToRender.map((msg) => (
+        {!isThreadIdLoading && messages.map((msg) => (
             <ChatMessage key={msg.id} message={msg} />
         ))}
-        {!isThreadIdLoading && isChatLoading && (
+        {!isThreadIdLoading && isLoading && (
           <div className="flex justify-center items-center p-4 text-sladen-navy dark:text-gray-400">
             <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-            <span>Generating response...</span>
+            <span>Waiting for response...</span>
           </div>
         )}
         <div ref={messagesEndRef} />
@@ -298,7 +293,7 @@ function ChatInterface() {
         input={input}
         handleInputChange={handleInputChange}
         handleSubmit={handleSubmit}
-        isLoading={isChatLoading || isThreadIdLoading}
+        isLoading={isOverallLoading}
         handleNewChat={handleNewChat}
         threadIdExists={!!threadId}
       />

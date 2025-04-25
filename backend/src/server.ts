@@ -2,7 +2,6 @@ import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { v4 as uuidv4 } from 'uuid';
-import { once } from 'node:events';
 
 import {
   addMessageToConversation,
@@ -55,17 +54,17 @@ app.use(cors({
 app.use(express.json());
 
 // ---------------------------------------------------------------------------
-//  Helper: open SSE connection
+//  Helper: open SSE connection - Removed: No longer used
 // ---------------------------------------------------------------------------
-function openSSE(res: Response, origin: string): void {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no'); // nginx-style buffering off
-  res.setHeader('Access-Control-Allow-Origin', origin); // 🔥 CORS for the stream
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.flushHeaders();
-}
+// function openSSE(res: Response, origin: string): void {
+//   res.setHeader('Content-Type', 'text/event-stream');
+//   res.setHeader('Cache-Control', 'no-cache');
+//   res.setHeader('Connection', 'keep-alive');
+//   res.setHeader('X-Accel-Buffering', 'no'); // nginx-style buffering off
+//   res.setHeader('Access-Control-Allow-Origin', origin); // 🔥 CORS for the stream
+//   res.setHeader('Access-Control-Allow-Credentials', 'true');
+//   res.flushHeaders();
+// }
 
 // ---------------------------------------------------------------------------
 //  Routes
@@ -97,109 +96,64 @@ app.post('/conversations/create', async (req: Request, res: Response): Promise<v
   }
 });
 
+// This endpoint is now NON-STREAMING
 app.post('/chat/stream', async (req: Request, res: Response): Promise<void> => {
   const body = req.body as { messages?: { role: string; content: string }[]; threadId?: string };
   const userMsg: string = body.messages?.at(-1)?.content?.trim() ?? '';
-  const origin = req.headers.origin ?? '*'; // Get origin for SSE
 
   // Guard clauses -----------------------------------------------------------
   if (!userMsg) {
-    // openSSE(res);
-    openSSE(res, origin); // Pass origin
-    res.write(`data:${JSON.stringify({ error: 'Message content cannot be empty' })}\n\ndata:[DONE]\n\n`);
-    res.end();
+    res.status(400).json({ error: 'Message content cannot be empty' });
     return;
   }
   if (userMsg.length < 3) {
-    // openSSE(res);
-    openSSE(res, origin); // Pass origin
-    res.write(`data:${JSON.stringify({ role: 'assistant', content: 'Could you finish your question first? 😊' })}\n\ndata:[DONE]\n\n`);
-    res.end();
+    res.status(400).json({ role: 'assistant', content: 'Could you finish your question first? 😊' });
     return;
   }
 
-  const threadId: string = body.threadId ?? uuidv4();
-  res.setHeader('X-Chat-Thread-Id', threadId);
+  let threadId: string | undefined = body.threadId; // Allow threadId to be undefined initially
 
-  await addMessageToConversation(threadId, { role: 'user', content: userMsg });
+  try { // Wrap main logic in try/catch for error handling
+    threadId = threadId ?? uuidv4(); // Assign only if needed and not yet defined
+    // res.setHeader('X-Chat-Thread-Id', threadId); // Optional header
 
-  // openSSE(res);
-  openSSE(res, origin); // Pass origin
+    await addMessageToConversation(threadId, { role: 'user', content: userMsg });
 
-  // Heart‑beat keep‑alive ----------------------------------------------------
-  const heartbeat = setInterval((): void => {
-    if (!res.writableEnded) {
-      // const ok = res.write(`:heartbeat ${Date.now()}\n\n`);
-      const ok = res.write(':ping\n\n'); // Change payload
-      // res.flush?.(); // Explicitly flush - Removed due to type error
-      if (!ok) void res.once('drain', () => {});
-    }
-  // }, 15_000);
-  }, 25_000); // Change interval
+    // --- SSE and related logic removed --- 
 
-  // Abort upstream on disconnect -------------------------------------------
-  const ac = new AbortController();
-  const cleanup = (): void => {
-    ac.abort();
-    clearInterval(heartbeat);
-  };
-  req.on('close', cleanup);
-  req.on('error', cleanup);
-
-  try {
     const history = await getMessageHistory(threadId);
     const graphInput = { query: userMsg, contextMessages: history };
 
     const graphCfg = {
       configurable: { thread_id: threadId, ...ensureAgentConfiguration({}) },
-      streamMode: ['messages'],
-      signal: ac.signal,
+      // No streamMode, no signal needed
     } as const;
 
-    const stream = await (retrievalGraph as any).stream(graphInput, graphCfg);
+    console.log(`[${threadId}] Invoking graph...`);
+    const finalState = await (retrievalGraph as any).invoke(graphInput, graphCfg);
+    console.log(`[${threadId}] Graph invocation complete.`);
+    // console.log('Final State:', JSON.stringify(finalState, null, 2)); // Optional: Log final state
 
-    for await (const patch of stream as any) {
-      console.log('--- STREAM PATCH RECEIVED ---');
-      console.log('Patch:', JSON.stringify(patch, null, 2)); // Log the raw patch
+    // Extract final message from the final state
+    // Adjust this based on the actual structure of finalState from your graph
+    const finalMessages = finalState?.messages ?? [];
+    // Find the last *assistant* message
+    const lastAssistantMessage = finalMessages.filter((m: any) => 
+        (m as any)?.type?.endsWith('AIMessage') || (m as any)?.role === 'assistant'
+    ).pop(); 
+    
+    const finalContent = (lastAssistantMessage as any)?.content ?? 'Sorry, I could not generate a response.';
 
-      // Corrected check for LangGraph stream format: ["messages", [message, metadata]]
-      if (!Array.isArray(patch) || patch.length !== 2 || patch[0] !== 'messages' || !Array.isArray(patch[1])) {
-        console.log('Patch is not in the expected ["messages", [...]] format, skipping.');
-        continue;
-      }
+    // Send standard JSON response
+    console.log(`[${threadId}] Sending response:`, finalContent);
+    res.json({ role: 'assistant', content: finalContent });
 
-      const messagesArray = patch[1];
-      const last = messagesArray.at(-1); // Get last item from the inner array
-      console.log('Last message object in patch array:', JSON.stringify(last, null, 2)); // Log the last message
-
-      // Extract content from .content (full message) or .delta (chunk)
-      const text = (last as any)?.content ?? (last as any)?.delta ?? '';
-      console.log('Extracted text:', text); // Log extracted text
-
-      if (!text) {
-        console.log('No text extracted, skipping write.');
-        continue;
-      }
-
-      console.log('>>> WRITING DATA:', text); // Log before writing
-      const dataToWrite = `data:${JSON.stringify({ role: 'assistant', content: text })}\n\n`;
-      const ok = res.write(dataToWrite);
-      console.log('Write successful:', ok); // Log write result
-
-      if (!ok) {
-        console.log('Write buffer full, waiting for drain...');
-        await once(res, 'drain');
-        console.log('Drain event received.');
-      }
-    }
-
-    res.write('data:[DONE]\n\n');
   } catch (err) {
     const error = err as Error;
-    res.write(`data:${JSON.stringify({ error: error.message })}\n\ndata:[DONE]\n\n`);
-  } finally {
-    cleanup();
-    res.end();
+    // Use 'unknown' if threadId wasn't successfully assigned before error
+    const tid = typeof threadId === 'string' ? threadId : 'unknown'; 
+    console.error(`[${tid}] Error processing chat request:`, error);
+    res.status(500).json({ error: error.message || 'An internal server error occurred', threadId: tid });
   }
 });
 
