@@ -121,6 +121,7 @@ _After adding the env-vars in Netlify, creating a frontend/netlify.toml that poi
     *   [x] Use data-stream v1 protocol: set `x-vercel-ai-data-stream: v1` header and send numeric code frames (`0:` for tokens, `1:` for final message).
     *   [x] Confirm deletion of unused Netlify Function `frontend/app/api/chat/route.ts`.
     *   [x] Update SSE frame format: initial thinking event, heartbeat, proper data frames, done event.
+    *   [x] Fixed `/chat/stream` endpoint implementation with proper SSE formatting, heartbeat handling, and response termination with "[DONE]" messages.
     *   [ ] Deploy updated backend code to Render service (ensure env vars are set).
     *   [ ] Deploy updated frontend code to Render service (set build command and publish directory, e.g., `yarn build --filter frontend`, publish `frontend/.next` or `frontend/out`) and configure frontend environment variables: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_LANGGRAPH_API_URL`.
     *   [ ] Remove Netlify-specific configuration: delete `frontend/netlify.toml` and any Netlify function routes.
@@ -494,3 +495,4 @@ After reviewing the codebase, there are several issues with the document retriev
   - Updated stream loop to use `send(lastMessage)` for AIMessage chunks/messages.
   - Updated end-of-stream signal to use `send("[DONE]")`.
   - Updated short message guard (`length < 2`) to use the `send()` helper and signal `[DONE]` immediately.
+- Removed unused `sendSSE` function that was generating TypeScript warning (6133).

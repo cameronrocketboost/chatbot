@@ -35,8 +35,14 @@ const ALLOWED_FILE_LABELS = 'PDF, DOCX, or PPTX';
 export async function POST(request: NextRequest) {
   console.log("[/api/ingest] Received POST request (Send Encoded Files Plan).");
   
-  // Get the client instance at runtime
-  const serverClient = createServerClient(); 
+  // Initialize the server client (catch env or init errors)
+  let serverClient;
+  try {
+    serverClient = createServerClient();
+  } catch (error: any) {
+    console.error("[/api/ingest] Failed to initialize server client:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
   
   try {
     // --- Env Var Check --- 
