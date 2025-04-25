@@ -397,7 +397,7 @@ export async function extractQueryFilters(
         const bestMatch = registryMatches[0];
         const confidence = bestMatch.similarity;
         const matchedFilename = bestMatch.filename; // Get the canonical name
-        const CONFIDENCE_THRESHOLD = 0.15; // Or your preferred threshold
+        const CONFIDENCE_THRESHOLD = 0.75; // Increased threshold from 0.15
 
         if (confidence >= CONFIDENCE_THRESHOLD) {
           console.log(`[RetrievalGraph] Registry validated explicit match: \"${matchedFilename}\" (Confidence: ${confidence.toFixed(2)})`);
@@ -405,7 +405,7 @@ export async function extractQueryFilters(
           if (!existingFilter || existingFilter.source !== matchedFilename) {
               console.log(`[RetrievalGraph] Validated explicit filename \"${matchedFilename}\" OVERRIDES existing filter. Resetting refinement count.`);
               newExplicitFilterSet = true; // Set flag
-      } else {
+          } else {
               console.log(`[RetrievalGraph] Validated explicit filename \"${matchedFilename}\" matches existing filter. Not resetting count.`);
               newExplicitFilterSet = false;
           }
