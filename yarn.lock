@@ -2212,6 +2212,13 @@
   dependencies:
     undici-types "~6.19.2"
 
+"@types/node@^22.15.2":
+  version "22.15.2"
+  resolved "https://registry.yarnpkg.com/@types/node/-/node-22.15.2.tgz#1db55aa64618ee93a58c8912f74beefe44aca905"
+  integrity sha512-uKXqKN9beGoMdBfcaTY1ecwz6ctxuJAcUlwE55938g0ZJ8lRxwAZqRz2AJ4pzpt5dHdTPMB863UZ0ESiFUcP7A==
+  dependencies:
+    undici-types "~6.21.0"
+
 "@types/pdf-parse@^1.1.5":
   version "1.1.5"
   resolved "https://registry.yarnpkg.com/@types/pdf-parse/-/pdf-parse-1.1.5.tgz#a0959022604457169177622b512ed03b975f10e2"
