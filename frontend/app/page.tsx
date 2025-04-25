@@ -223,6 +223,8 @@ function ChatInterface() {
     api: `${BACKEND_URL}/chat/stream`,
     id: threadId || undefined,
     body: { threadId },
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
   });
 
   const { toast } = useToast();
