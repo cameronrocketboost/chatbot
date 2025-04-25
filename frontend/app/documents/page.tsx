@@ -384,10 +384,20 @@ export default function DocumentsPage() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ message: 'Failed to process files.' }));
-        throw new Error(errorData.error || 'Failed to process files.');
+        // Try to parse error JSON to get details
+        let errorData: any;
+        try {
+          errorData = await response.json();
+        } catch {
+          errorData = { error: 'Failed to process files.' };
+        }
+        console.error('[handleProcessFiles] Ingest error data:', errorData);
+        // Construct message including details if available
+        const errorMessage = errorData.details
+          ? `${errorData.error}: ${errorData.details}`
+          : errorData.error || 'Failed to process files.';
+        throw new Error(errorMessage);
       }
-
       const result = await response.json();
       toast({ title: 'Processing Started', description: result.message || 'File processing initiated successfully!', variant: 'default' });
       
