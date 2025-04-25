@@ -154,20 +154,29 @@ app.post('/chat/invoke', async (req: Request, res: Response): Promise<void> => {
 
     // Extract final message from the final state
     const finalMessages = finalState?.messages ?? [];
-    // Find the last message that is an AIMessage based on its ID structure
-    const lastAssistantMessage = finalMessages.filter((m: any) => 
+    // --- MODIFIED EXTRACTION LOGIC ---
+    // First, try the specific filter for complex graph message IDs
+    let lastAssistantMessage = finalMessages.filter((m: any) => 
         Array.isArray((m as any)?.id) && (m as any).id.at(-1) === 'AIMessage'
     ).pop();
+
+    // If the specific filter didn't find anything, try taking the last message overall
+    // (assuming the last message in the final state is the intended response)
+    if (!lastAssistantMessage && finalMessages.length > 0) {
+      lastAssistantMessage = finalMessages[finalMessages.length - 1];
+    }
+    // --- END MODIFIED EXTRACTION LOGIC ---
     
     // Extract content more robustly - target kwargs.content FIRST based on logs
     let finalContent = 'Sorry, I could not generate a response.'; // Default error
     
-    if (lastAssistantMessage && (lastAssistantMessage as any).kwargs?.content) {
-        finalContent = (lastAssistantMessage as any).kwargs.content;
-    } else if (lastAssistantMessage?.content) { // Fallback to direct content property if kwargs.content not found
-        finalContent = lastAssistantMessage.content;
+    if (lastAssistantMessage) { // Check if we found *any* assistant message
+      if ((lastAssistantMessage as any).kwargs?.content) {
+          finalContent = (lastAssistantMessage as any).kwargs.content;
+      } else if ((lastAssistantMessage as any).content) { // Fallback to direct content property
+          finalContent = (lastAssistantMessage as any).content;
+      }
     }
-
     // Send standard JSON response
     console.log(`[${threadId}] Sending response:`, finalContent);
     res.json({ role: 'assistant', content: finalContent });
