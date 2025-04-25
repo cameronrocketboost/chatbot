@@ -168,7 +168,8 @@ app.post('/chat/invoke', async (req: Request, res: Response): Promise<void> => {
       },
     } as const;
 
-    console.log(`[${threadId}] Invoking graph with config:`, JSON.stringify(graphCfg, null, 2)); // Log the config
+    // console.log(`[${threadId}] Invoking graph with config:`, JSON.stringify(graphCfg, null, 2)); // Log the config - REMOVED JSON.stringify due to circular refs
+    console.log(`[${threadId}] Invoking graph with thread_id: ${graphCfg.configurable.thread_id}`); // Log thread_id only
     const finalState = await (retrievalGraph as any).invoke(graphInput, graphCfg);
     console.log(`[${threadId}] Graph invocation complete.`);
     // console.log('Final State:', JSON.stringify(finalState, null, 2)); // Optional: Log final state
