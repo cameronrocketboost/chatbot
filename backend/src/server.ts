@@ -181,7 +181,7 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
     });
     res.flushHeaders?.(); // Ensure headers reach the client immediately
     res.write(`data: ${JSON.stringify({ error: 'Message content cannot be empty' })}\n\n`);
-    res.write(`data: "[DONE]"\n\n`);
+    res.write(`data: [DONE]\n\n`);
     res.end();
     return;
   }
@@ -197,7 +197,7 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
     });
     res.flushHeaders?.(); // Ensure headers sent
     res.write(`data: ${JSON.stringify({ role: "assistant", content: "Could you finish your question first? 😊" })}\n\n`);
-    res.write(`data: "[DONE]"\n\n`);
+    res.write(`data: [DONE]\n\n`);
     res.end();
     return;
   }
@@ -284,7 +284,7 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
       // Send the DONE signal to properly terminate the stream for clients
       if (!res.writableEnded) {
         console.log(`[POST /chat/stream] Ending SSE stream with [DONE].`);
-        res.write('data: "[DONE]"\n\n');
+        res.write('data: [DONE]\n\n');
       }
 
     } catch (streamError: any) {
@@ -295,7 +295,7 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
           // Standard SSE error format
           const errorData = JSON.stringify({ error: streamError.message || 'Error during stream execution' });
           res.write(`data: ${errorData}\n\n`); 
-          res.write('data: "[DONE]"\n\n');
+          res.write('data: [DONE]\n\n');
         } catch (writeError) {
           console.error("[SSE Error] Failed to write error to stream:", writeError);
         }
@@ -324,7 +324,7 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
       try {
         const errorData = JSON.stringify({ error: error.message || 'An unexpected server error occurred.' });
         res.write(`data: ${errorData}\n\n`);
-        res.write('data: "[DONE]"\n\n');
+        res.write('data: [DONE]\n\n');
       } catch (writeError) {
         console.error("[SSE Error] Failed to write overall error to stream:", writeError);
       }
