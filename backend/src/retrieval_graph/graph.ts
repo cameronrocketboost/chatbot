@@ -493,7 +493,7 @@ export async function extractQueryFilters(
             const bestMatch = potentialMatches[0];
             const confidence = bestMatch.similarity;
             const matchedFilename = bestMatch.filename;
-            const CONFIDENCE_THRESHOLD = 0.15;
+            const CONFIDENCE_THRESHOLD = 0.75;
             if (confidence >= CONFIDENCE_THRESHOLD) {
               console.log(`[RetrievalGraph] Registry Match found and above threshold. Setting filter.`);
               const filterApplied = `Registry Match: ${matchedFilename} (Conf: ${confidence.toFixed(2)})`;
