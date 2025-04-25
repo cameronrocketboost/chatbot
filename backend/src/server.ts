@@ -141,8 +141,10 @@ app.post('/chat/stream', async (req: Request, res: Response): Promise<void> => {
         Array.isArray((m as any)?.id) && (m as any).id.at(-1) === 'AIMessage'
     ).pop();
     
-    // Extract content from kwargs if available
-    const finalContent = (lastAssistantMessage as any)?.kwargs?.content ?? 'Sorry, I could not generate a response.';
+    // Extract content more robustly - check direct content property first
+    const finalContent = lastAssistantMessage?.content ?? 
+                         (lastAssistantMessage as any)?.kwargs?.content ?? 
+                         'Sorry, I could not generate a response.';
 
     // Send standard JSON response
     console.log(`[${threadId}] Sending response:`, finalContent);
