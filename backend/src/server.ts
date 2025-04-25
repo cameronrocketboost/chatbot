@@ -153,30 +153,22 @@ app.post('/chat/invoke', async (req: Request, res: Response): Promise<void> => {
     // console.log('Final State:', JSON.stringify(finalState, null, 2)); // Optional: Log final state
 
     // Extract final message from the final state
-    const finalMessages = finalState?.messages ?? [];
-    // --- MODIFIED EXTRACTION LOGIC ---
-    // First, try the specific filter for complex graph message IDs
-    let lastAssistantMessage = finalMessages.filter((m: any) => 
-        Array.isArray((m as any)?.id) && (m as any).id.at(-1) === 'AIMessage'
-    ).pop();
-
-    // If the specific filter didn't find anything, try taking the last message overall
-    // (assuming the last message in the final state is the intended response)
-    if (!lastAssistantMessage && finalMessages.length > 0) {
-      lastAssistantMessage = finalMessages[finalMessages.length - 1];
-    }
-    // --- END MODIFIED EXTRACTION LOGIC ---
-    
-    // Extract content more robustly - target kwargs.content FIRST based on logs
+    // --- SIMPLIFIED EXTRACTION LOGIC ---
     let finalContent = 'Sorry, I could not generate a response.'; // Default error
-    
-    if (lastAssistantMessage) { // Check if we found *any* assistant message
-      if ((lastAssistantMessage as any).kwargs?.content) {
-          finalContent = (lastAssistantMessage as any).kwargs.content;
-      } else if ((lastAssistantMessage as any).content) { // Fallback to direct content property
-          finalContent = (lastAssistantMessage as any).content;
+    const finalMessages = finalState?.messages;
+
+    if (Array.isArray(finalMessages) && finalMessages.length > 0) {
+      const lastMessage = finalMessages[finalMessages.length - 1];
+      // Directly access kwargs.content, assuming the last message is the AI response
+      if (lastMessage && (lastMessage as any).kwargs?.content) {
+        finalContent = (lastMessage as any).kwargs.content;
+      } else if (lastMessage?.content) {
+        // Add a fallback for potential messages that might just have a .content property
+        finalContent = lastMessage.content;
       }
     }
+    // --- END SIMPLIFIED EXTRACTION LOGIC ---
+
     // Send standard JSON response
     console.log(`[${threadId}] Sending response:`, finalContent);
     res.json({ role: 'assistant', content: finalContent });
