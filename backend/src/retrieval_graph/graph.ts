@@ -5,7 +5,7 @@ import { getCustomRetriever } from '../shared/retrieval.js'; // Import getCustom
 import { formatDocs } from './utils.js';
 import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { 
-  RESPONSE_SYSTEM_PROMPT,
+  RESPONSE_SYSTEM_PROMPT, 
   // EVALUATION_PROMPT, // <<< Removed unused import
 } from './prompts.js';
 import { RunnableConfig } from '@langchain/core/runnables';
@@ -131,7 +131,7 @@ async function classifyQuery(
   
   if (query.split(/\s+/).length <= 2 && !query.includes('.') && !query.match(/pdf|doc|presentation|file|slide/i)) {
      console.log(`[Classifier] Short query detected: "${query}" - routing direct`);
-     return { route: 'direct' };
+    return { route: 'direct' };
   }
 
   // 2. LLM Classification (if no simple match)
@@ -163,12 +163,12 @@ async function classifyQuery(
   } catch (error) {
       console.error("[Classifier] Error during LLM classification:", error);
       // Fallback heuristic (similar to old function)
-      if (query.match(/pdf|document|file|presentation|slide|ppt|docx?|read|find/i)) {
+    if (query.match(/pdf|document|file|presentation|slide|ppt|docx?|read|find/i)) {
           console.log('[Classifier] Fallback: Query appears document-related, routing retrieve');
-          return { route: 'retrieve' };
-      }
+      return { route: 'retrieve' };
+    }
       console.log('[Classifier] Fallback: Defaulting to direct route due to error');
-      return { route: 'direct' };
+    return { route: 'direct' };
   }
 }
 
@@ -395,28 +395,28 @@ export async function extractQueryFilters(
         const { data: fuzzyMatches, error: fuzzyRpcError } = await supabaseClient
           .rpc('find_document_by_name', { 
              search_term: explicitExtractionResult, 
-             exact_match: false // Allow fuzzy matching
-          });
+           exact_match: false // Allow fuzzy matching
+        });
 
         if (!fuzzyRpcError && fuzzyMatches && fuzzyMatches.length > 0) {
           const bestMatch = fuzzyMatches[0];
-          const confidence = bestMatch.similarity;
+        const confidence = bestMatch.similarity;
           const matchedFilename = bestMatch.filename; 
           const HIGH_CONFIDENCE_THRESHOLD = 0.75; // Threshold for explicit fuzzy match
 
           if (confidence >= HIGH_CONFIDENCE_THRESHOLD) {
             console.log(`[RetrievalGraph] FUZZY match validated (High Confidence): "${matchedFilename}" (Confidence: ${confidence.toFixed(2)})`);
             const filterApplied = `Explicit/Fuzzy: ${matchedFilename}`;
-            finalActiveFilter = { source: matchedFilename, filterApplied: filterApplied };
+          finalActiveFilter = { source: matchedFilename, filterApplied: filterApplied };
             cleanedQuery = currentQuery; 
-            queryFilters = { "metadata.source": matchedFilename, filterApplied: filterApplied };
+          queryFilters = { "metadata.source": matchedFilename, filterApplied: filterApplied };
             newExplicitFilterSet = (!existingFilter || existingFilter.source !== matchedFilename);
             validatedMatch = true;
-          } else {
+        } else {
             // Fuzzy match found but confidence too low for explicit validation
             console.log(`[RetrievalGraph] Explicit regex match \"${explicitExtractionResult}\" failed fuzzy validation (Confidence: ${confidence.toFixed(2)} < ${HIGH_CONFIDENCE_THRESHOLD}).`);
-          }
-        } else {
+        }
+      } else {
             if (fuzzyRpcError) console.error("[RetrievalGraph] Fuzzy registry validation RPC error:", fuzzyRpcError);
             console.log(`[RetrievalGraph] Explicit regex match \"${explicitExtractionResult}\" not found in registry (fuzzy).`);
         }
@@ -460,53 +460,53 @@ export async function extractQueryFilters(
     if (!supabaseClient) {
         throw new Error("Missing Supabase client in config for registry lookup");
     }
-    const searchTerms = extractKeyTerms(currentQuery); // Use original query for terms
-    console.log(`[RetrievalGraph] Using terms for registry search: ${searchTerms.join(', ')}`);
-    
-    if (searchTerms.length > 0) {
+      const searchTerms = extractKeyTerms(currentQuery); // Use original query for terms
+      console.log(`[RetrievalGraph] Using terms for registry search: ${searchTerms.join(', ')}`);
+      
+      if (searchTerms.length > 0) {
       const { data: registryMatches, error: rpcError } = await supabaseClient
-        .rpc('find_document_by_name', { 
-           search_term: searchTerms.join(' '),
-           exact_match: false
-        });
+          .rpc('find_document_by_name', { 
+             search_term: searchTerms.join(' '),
+             exact_match: false
+          });
 
-      if (rpcError) {
-        console.error("[RetrievalGraph] Registry lookup RPC error:", rpcError);
-      } else if (registryMatches && registryMatches.length > 0) {
-        // ...(Smarter Match Selection logic - simplified) ...
-        const numericIdentifiers = searchTerms.filter(term => /^\d+$/.test(term));
-        let potentialMatches = registryMatches.filter((match: { filename: string }) => 
-          numericIdentifiers.every((num: string) => match.filename.includes(num))
-        );
-        if (potentialMatches.length > 0) {
-          potentialMatches.sort((a: { similarity: number }, b: { similarity: number }) => b.similarity - a.similarity);
-          const bestMatch = potentialMatches[0];
-          const confidence = bestMatch.similarity;
-          const matchedFilename = bestMatch.filename;
+        if (rpcError) {
+          console.error("[RetrievalGraph] Registry lookup RPC error:", rpcError);
+        } else if (registryMatches && registryMatches.length > 0) {
+          // ...(Smarter Match Selection logic - simplified) ...
+          const numericIdentifiers = searchTerms.filter(term => /^\d+$/.test(term));
+          let potentialMatches = registryMatches.filter((match: { filename: string }) => 
+            numericIdentifiers.every((num: string) => match.filename.includes(num))
+          );
+          if (potentialMatches.length > 0) {
+            potentialMatches.sort((a: { similarity: number }, b: { similarity: number }) => b.similarity - a.similarity);
+            const bestMatch = potentialMatches[0];
+            const confidence = bestMatch.similarity;
+            const matchedFilename = bestMatch.filename;
           const CONFIDENCE_THRESHOLD = 0.50;
-          if (confidence >= CONFIDENCE_THRESHOLD) {
-            console.log(`[RetrievalGraph] Registry Match found and above threshold. Setting filter.`);
-            const filterApplied = `Registry Match: ${matchedFilename} (Conf: ${confidence.toFixed(2)})`;
-            finalActiveFilter = { source: matchedFilename, filterApplied: filterApplied }; 
-            queryFilters = { "metadata.source": matchedFilename, filterApplied: filterApplied };
-            newExplicitFilterSet = true; // << Set flag here too if filter is newly set
+            if (confidence >= CONFIDENCE_THRESHOLD) {
+              console.log(`[RetrievalGraph] Registry Match found and above threshold. Setting filter.`);
+              const filterApplied = `Registry Match: ${matchedFilename} (Conf: ${confidence.toFixed(2)})`;
+              finalActiveFilter = { source: matchedFilename, filterApplied: filterApplied }; 
+              queryFilters = { "metadata.source": matchedFilename, filterApplied: filterApplied };
+              newExplicitFilterSet = true; // << Set flag here too if filter is newly set
+            } else { 
+              console.log(`[RetrievalGraph] Registry Match confidence below threshold.`); 
+            }
           } else { 
-            console.log(`[RetrievalGraph] Registry Match confidence below threshold.`); 
+            console.log("[RetrievalGraph] No suitable registry match found after filtering."); 
           }
         } else { 
-          console.log("[RetrievalGraph] No suitable registry match found after filtering."); 
+          console.log("[RetrievalGraph] No promising matches found in document registry."); 
         }
-      } else { 
-        console.log("[RetrievalGraph] No promising matches found in document registry."); 
-      }
-      }
-    } catch (error) {
-     console.error("[RetrievalGraph] Error during registry lookup:", error);
-     finalActiveFilter = null;
-     queryFilters = {}; // Clear query filters too
-     newExplicitFilterSet = false; // Ensure flag is false on error
-  }
-} else {
+        }
+      } catch (error) {
+       console.error("[RetrievalGraph] Error during registry lookup:", error);
+       finalActiveFilter = null;
+       queryFilters = {}; // Clear query filters too
+       newExplicitFilterSet = false; // Ensure flag is false on error
+    }
+  } else {
      console.log("[RetrievalGraph] Skipping registry lookup as a specific filename filter is already active OR __LATEST__ was found explicitly.");
   }
 
@@ -626,7 +626,7 @@ export async function retrieveDocuments(
     const updatedState: Partial<AgentState> = {
       documents: relevantDocs,
       active_document_filter: extracted_active_filter, 
-      new_explicit_filter_set: extracted_new_filter_flag,
+      new_explicit_filter_set: extracted_new_filter_flag, 
       currentDocChunkIndex: extracted_active_filter ? 0 : null // Set chunk index based on filter
     };
     
@@ -1208,7 +1208,7 @@ async function handleNavigation(
   } else {
       console.log("[Navigation] No navigation keywords detected or no active document context.");
       // No change to index
-      return {}; 
+    return {}; 
   }
 }
 
