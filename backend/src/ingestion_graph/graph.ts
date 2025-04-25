@@ -9,8 +9,10 @@ import { Buffer } from 'buffer';
 import pdf from 'pdf-parse';
 import mammoth from 'mammoth';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseClient } from '@supabase/supabase-js';
 import officeParser from 'officeparser';
+import { SupabaseVectorStore } from "@langchain/community/vectorstores/supabase";
+import { Embeddings } from "@langchain/core/embeddings";
 
 // Use original State/Config annotations
 import { IndexStateAnnotation, IndexStateType } from './state.js';
@@ -19,7 +21,7 @@ import { IndexStateAnnotation, IndexStateType } from './state.js';
 //   ensureIndexConfiguration,
 //   IndexConfigurationAnnotation,
 // } from './configuration.js';
-import { makeRetriever } from '../shared/retrieval.js';
+// import { makeRetriever } from '../shared/retrieval.js';
 
 // Define the separator - NOTE: officeParser doesn't insert this, so it's currently unused by pptxSplitter
 // const SLIDE_SEPARATOR = '\n\n---SLIDE_SEPARATOR---\n\n';
@@ -129,7 +131,7 @@ async function processSingleFile(
  */
 async function processFiles(
   state: IndexStateType,
-  _config?: RunnableConfig,
+  config?: RunnableConfig,
 ): Promise<Partial<IndexStateType>> {
   console.log('[IngestionGraph] Starting processFiles node (parallel version)...');
   if (!state.files || state.files.length === 0) {
@@ -158,22 +160,18 @@ async function processFiles(
     error: state.error, // Preserve existing error
   };
 
-  // Initialize Supabase client 
-  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    console.error('[IngestionGraph] Supabase credentials not found for duplicate check.');
-    return { 
+  // Get Supabase client from config or throw error
+  const supabaseClient = config?.configurable?.supabaseClient as SupabaseClient;
+  if (!supabaseClient) {
+     console.error('[IngestionGraph] Supabase client not found in config for processFiles.');
+     return { 
       ...currentState,
       docs: [], 
-      error: 'Supabase credentials missing.', 
+      error: 'Supabase client not found in config', 
       finalStatus: 'Failed', 
       skippedFilenames: [] 
     };
   }
-  const supabaseClient = createClient(
-    process.env.SUPABASE_URL ?? '',
-    process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-    { auth: { persistSession: false } }
-  );
 
   console.log(`[IngestionGraph] Processing ${state.files.length} files in parallel...`);
   const docsForChunking: Document[] = [];
@@ -242,55 +240,18 @@ async function chunkAndEmbedDocs(
   state: IndexStateType,
   config?: RunnableConfig,
 ): Promise<Partial<IndexStateType>> {
-  const docsToChunk = state.docs ?? []; // Renamed for clarity
-  const skippedFiles = state.skippedFilenames ?? [];
-  let currentError = state.error ?? null;
-  
-  // Update processing step
-  const progressState: Partial<IndexStateType> = {
-    processingStep: 'chunkAndEmbedDocs', // Updated step name
-    currentFile: null, 
-    totalFiles: state.totalFiles || 0,
-    processedFiles: state.processedFiles || 0
-  };
-  
-  let finalStatus = state.finalStatus === 'Failed' ? 'Failed' : 'InProgress'; 
-  
-  console.log(`[IngestionGraph] chunkAndEmbedDocs received ${docsToChunk.length} docs. Skipped: ${skippedFiles.length}. Error: ${currentError}. Status: ${finalStatus}`);
-
-  if (finalStatus === 'Failed') {
-      return { /* ... return failed state ... */ };
-  }
-
-  if (!config) {
-      return { /* ... return missing config state ... */ };
-  }
-
-  // Filter out any potential empty documents 
-  const validDocs = docsToChunk.filter(
-    (doc) => doc.pageContent && doc.pageContent.trim() !== ''
-  );
-  console.log(`[IngestionGraph] Valid docs for chunking: ${validDocs.length}/${docsToChunk.length}`);
-
-  if (validDocs.length === 0) {
-    // Determine status if no valid docs
-    if (skippedFiles.length > 0) {
-      finalStatus = 'CompletedWithSkips';
-    } else if (currentError) {
-      finalStatus = 'Failed';
-    } else {
-      finalStatus = 'CompletedNoNewDocs';
-    }
-    return { docs: [], error: currentError, finalStatus: finalStatus, skippedFilenames: skippedFiles, ...progressState, files: state.files };
-  }
+  console.log("--- Entering chunkAndEmbedDocs ---");
+  let currentError: string | null = state.error || null;
+  let finalStatus: IndexStateType['finalStatus'] = state.finalStatus ?? 'Processing';
+  const skippedFiles = state.skippedFilenames || [];
+  let allChunks: Document[] = [];
 
   // --- Chunking Logic --- 
-  let allChunks: Document[] = [];
   try {
     console.log('[IngestionGraph] Starting document chunking...');
     // Separate docs based on type for specific splitters
-    const pptxDocs = validDocs.filter(doc => doc.metadata?.documentType === 'pptx');
-    const otherDocs = validDocs.filter(doc => doc.metadata?.documentType !== 'pptx');
+    const pptxDocs = state.docs?.filter(doc => doc.metadata?.documentType === 'pptx') || [];
+    const otherDocs = state.docs?.filter(doc => doc.metadata?.documentType !== 'pptx') || [];
 
     let pptxChunks: Document[] = [];
     if (pptxDocs.length > 0) {
@@ -338,8 +299,23 @@ async function chunkAndEmbedDocs(
   if (finalStatus !== 'Failed' && allChunks.length > 0) {
       try {
         console.log(`[IngestionGraph] Embedding ${allChunks.length} chunks...`);
-        const retriever = await makeRetriever(config);
-        await retriever.addDocuments(allChunks); 
+        
+        // Get dependencies from config
+        const embeddings = config?.configurable?.embeddings as Embeddings;
+        const supabaseClient = config?.configurable?.supabaseClient as SupabaseClient;
+
+        if (!embeddings || !supabaseClient) {
+          throw new Error("Missing Supabase client or embeddings in config for chunkAndEmbedDocs");
+        }
+        
+        // Use SupabaseVectorStore with injected dependencies
+        const vectorStore = new SupabaseVectorStore(embeddings, {
+          client: supabaseClient,
+          tableName: 'documents',
+          queryName: 'match_documents',
+        });
+        
+        await vectorStore.addDocuments(allChunks); 
         console.log(`[IngestionGraph] Successfully added ${allChunks.length} chunks to vector store.`);
         
         // Determine final success status only if embedding succeeded
@@ -358,7 +334,6 @@ async function chunkAndEmbedDocs(
 
   // --- Return Final State --- 
   return { 
-      ...progressState,
       docs: [], // Always clear docs after this node
       error: currentError, 
       finalStatus: finalStatus, // Reflect outcome of chunking & embedding
