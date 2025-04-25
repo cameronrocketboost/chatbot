@@ -223,15 +223,6 @@ function ChatInterface() {
     api: `${BACKEND_URL}/chat/stream`,
     id: threadId || undefined,
     body: { threadId },
-    streamProtocol: 'data', // 👈 parse SSE or 'code' protocol frames
-    // Add fetch options supported by ai@^3.2.0
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    fetch: (url, opts) => fetch(url, {
-      ...opts,
-      keepalive: true,   // Add keepalive
-      cache: 'no-store', // Add cache: no-store
-    }),
   });
 
   const { toast } = useToast();
