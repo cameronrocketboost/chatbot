@@ -417,12 +417,22 @@ export async function extractQueryFilters(
         } else {
           console.log(`[RetrievalGraph] Explicit regex match \"${explicitExtractionResult}\" failed registry validation (Confidence: ${confidence.toFixed(2)} < ${CONFIDENCE_THRESHOLD}).`);
           // explicitFoundFilename = false; // Commented out unused variable assignment
-          // Keep existing filter (or null)
+          // <<< FIX: Clear the filter if explicit validation fails >>>
+          console.log("[RetrievalGraph] Clearing active filter due to failed explicit validation.");
+          finalActiveFilter = null;
+          queryFilters = {}; // Also clear query filters
+          newExplicitFilterSet = false;
+          // Keep existing filter (or null) // <<< Removed incorrect comment
         }
       } else {
         console.log(`[RetrievalGraph] Explicit regex match \"${explicitExtractionResult}\" not found in registry.`);
         // explicitFoundFilename = false; // Commented out unused variable assignment
-        // Keep existing filter (or null)
+        // <<< FIX: Clear the filter if explicit match not found in registry >>>
+        console.log("[RetrievalGraph] Clearing active filter because explicit match was not found in registry.");
+        finalActiveFilter = null;
+        queryFilters = {}; // Also clear query filters
+        newExplicitFilterSet = false;
+        // Keep existing filter (or null) // <<< Removed incorrect comment
       }
 
     } else if (explicitExtractionResult === '__LATEST__') {
