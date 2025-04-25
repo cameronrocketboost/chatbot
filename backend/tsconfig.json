@@ -18,7 +18,7 @@
     "strictFunctionTypes": false,
     "skipLibCheck": true,
     "outDir": "dist",
-    "types": ["jest", "node"],
+    "types": ["jest", "node", "express"],
     "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
