@@ -135,14 +135,14 @@ app.post('/chat/stream', async (req: Request, res: Response): Promise<void> => {
     // console.log('Final State:', JSON.stringify(finalState, null, 2)); // Optional: Log final state
 
     // Extract final message from the final state
-    // Adjust this based on the actual structure of finalState from your graph
     const finalMessages = finalState?.messages ?? [];
-    // Find the last *assistant* message
+    // Find the last message that is an AIMessage based on its ID structure
     const lastAssistantMessage = finalMessages.filter((m: any) => 
-        (m as any)?.type?.endsWith('AIMessage') || (m as any)?.role === 'assistant'
-    ).pop(); 
+        Array.isArray((m as any)?.id) && (m as any).id.at(-1) === 'AIMessage'
+    ).pop();
     
-    const finalContent = (lastAssistantMessage as any)?.content ?? 'Sorry, I could not generate a response.';
+    // Extract content from kwargs if available
+    const finalContent = (lastAssistantMessage as any)?.kwargs?.content ?? 'Sorry, I could not generate a response.';
 
     // Send standard JSON response
     console.log(`[${threadId}] Sending response:`, finalContent);
