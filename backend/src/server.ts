@@ -214,7 +214,6 @@ app.post('/chat/stream', async (req: express.Request, res: express.Response): Pr
     // Helper to send SSE frames (defined later, but usable here)
     const sendHelper = (obj: unknown) => res.write(`data:${JSON.stringify(obj)}\n\n`);
     sendHelper({ role: "assistant", content: "Could you finish your question first? 😊" });
-    sendHelper("[DONE]");
     res.end();
     return;
   }
@@ -331,11 +330,10 @@ data: ${errorData}
       console.log(`[POST /chat/stream] Heartbeat cleared for thread ${currentThreadId}.`);
     }
 
-    // End the SSE stream cleanly and signal completion
+    // End the SSE stream cleanly
     if (!res.writableEnded) {
-      console.log('[POST /chat/stream] Ending SSE stream with [DONE].');
-      send("[DONE]"); // Use send helper to signal end of stream
-      res.end(); 
+      console.log('[POST /chat/stream] Ending SSE stream.');
+      res.end();
     }
 
   } catch (error: any) {
