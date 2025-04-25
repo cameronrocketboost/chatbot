@@ -496,3 +496,4 @@ After reviewing the codebase, there are several issues with the document retriev
   - Updated end-of-stream signal to use `send("[DONE]")`.
   - Updated short message guard (`length < 2`) to use the `send()` helper and signal `[DONE]` immediately.
 - Removed unused `sendSSE` function that was generating TypeScript warning (6133).
+- Fixed SSE stream termination by changing all instances of `data: "[DONE]"\n\n` (with quotes) to `data: [DONE]\n\n` (without quotes) to match the expected format for Vercel AI SDK and other clients.
