@@ -6,7 +6,6 @@ import { RunnableConfig } from '@langchain/core/runnables';
 import { StateGraph, END } from '@langchain/langgraph';
 import { Document } from '@langchain/core/documents';
 import { Buffer } from 'buffer';
-import pdf from 'pdf-parse';
 import mammoth from 'mammoth';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
 import { SupabaseClient } from '@supabase/supabase-js';
@@ -84,7 +83,9 @@ async function processSingleFile(
 
     // --- Parsing Logic --- 
     if (file.contentType === 'application/pdf') {
-      const data = await pdf(buffer); // Assume await works here
+      // Dynamically import pdf-parse only when needed
+      const { default: pdf } = await import('pdf-parse');
+      const data = await pdf(buffer);
       if (data.text.trim()) {
         return { doc: new Document({ pageContent: data.text, metadata: baseMetadata }), skipped: false, error: null };
       } else {

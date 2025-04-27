@@ -201,16 +201,17 @@ function ChatInterface() {
     setError(null);
 
     try {
-      const response = await fetch(`${BACKEND_URL}/chat/invoke`, { // Updated endpoint name
+      // --- Streaming Call Logic ---
+      // Use stream_log for intermediate steps if needed, or stream for just final output + tokens
+      const response = await fetch(`${BACKEND_URL}/custom_chat/invoke`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // Include credentials if your backend CORS requires it
-        // credentials: 'include', 
-        body: JSON.stringify({
+        body: JSON.stringify({ 
           messages: [...messages, userMessage], // Send history including new message
           threadId: threadId,
         }),
       });
+      // --- End Streaming Call Logic ---
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ message: 'Failed to parse error response' }));

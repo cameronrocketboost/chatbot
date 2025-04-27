@@ -5,20 +5,15 @@ export default {
   roots: ['<rootDir>/src'],
   testMatch: ['**/__tests__/**/*.test.ts'],
   testPathIgnorePatterns: ['/node_modules/', '/dist/', '\\.d\\.ts$'],
-  transform: {
-    '^.+\.tsx?$': [
-      'ts-jest',
-      {
-        useESM: true,
-        tsconfig: 'tsconfig.json',
-      },
-    ],
-  },
   moduleNameMapper: {
     '^(\.{1,2}/.*)\.js$': '$1',
     '^@shared/(.*)$': '<rootDir>/src/shared/$1',
   },
-  extensionsToTreatAsEsm: ['.ts'],
+  transformIgnorePatterns: [
+    '/node_modules/(?!(@langchain|langchain|uuid|@supabase/supabase-js)/)',
+    '\\.pnp\\.[^\/]+$'
+  ],
+  extensionsToTreatAsEsm: ['.ts', '.tsx'],
   collectCoverage: true,
   coverageDirectory: 'coverage',
   coverageProvider: 'v8',
