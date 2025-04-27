@@ -11,7 +11,7 @@ import { loadChatModel } from './shared/utils.js';
 import {
   addMessageToConversation,
   getMessageHistory,
-  supabase as supabaseRepoClient, // Renamed to avoid conflict
+  supabase as supabaseRepoClient,
 } from './supabaseRepo.js';
 
 import { graph as retrievalGraph } from './retrieval_graph/graph.js';
@@ -126,8 +126,9 @@ app.post('/conversations/create', async (req: Request, res: Response): Promise<v
   }
 });
 
-// This endpoint is now NON-STREAMING
-app.post('/chat/invoke', async (req: Request, res: Response): Promise<void> => {
+// UNCOMMENT: This endpoint is now NON-STREAMING
+app.post('/custom_chat/invoke', async (req: Request, res: Response): Promise<void> => {
+  console.log(`[${new Date().toISOString()}] >>> ENTERED /chat/invoke handler`);
   const body = req.body as { messages?: { role: string; content: string }[]; threadId?: string };
   const userMsg: string = body.messages?.at(-1)?.content?.trim() ?? '';
 
@@ -221,6 +222,6 @@ app.post('/chat/invoke', async (req: Request, res: Response): Promise<void> => {
 // ---------------------------------------------------------------------------
 //  Bootstrap
 // ---------------------------------------------------------------------------
-app.listen(PORT, (): void => {
-  console.log(`LangGraph server listening on ${PORT}`);
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 });

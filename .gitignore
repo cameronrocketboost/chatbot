@@ -39,7 +39,6 @@ apps/docs/public/registry/
 .turbo
 
 # env
-.env
 
 # cursor
 .cursor
@@ -51,3 +50,4 @@ llm_context/
 test_docs
 
 .swc
+config.bat

@@ -9,15 +9,15 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { Embeddings } from '@langchain/core/embeddings';
 // import { BaseLanguageModel } from '@langchain/core/language_models/base'; // Removed unused import
 import { Document } from '@langchain/core/documents'; // Ensure this import exists
-import { HydeRetriever } from 'langchain/retrievers/hyde';
+// import { HydeRetriever } from 'langchain/retrievers/hyde'; // REMOVED HydeRetriever
 // import { BaseRetrieverInterface } from '@langchain/core/retrievers'; // Removed unused import
 import {
-  SupabaseHybridSearch,
+  SupabaseHybridSearch, // USE SupabaseHybridSearch
 } from '@langchain/community/retrievers/supabase'; // Removed SupabaseFilter
 import { BaseCallbackHandler } from '@langchain/core/callbacks/base';
-import { SupabaseVectorStore } from '@langchain/community/vectorstores/supabase'; // Add SupabaseVectorStore import
-// @ts-ignore
-import { loadChatModel } from './utils.js'; // USE ./utils.js extension
+// import { SupabaseVectorStore } from '@langchain/community/vectorstores/supabase'; // REMOVED SupabaseVectorStore (Hybrid Search uses it internally)
+// @ts-ignore -- Keep ts-ignore for now, although loadChatModel import below is removed
+// import { loadChatModel } from './utils.js'; // REMOVED loadChatModel import
 
 // Removed unused MetadataFilter type definition
 
@@ -26,47 +26,49 @@ type RetrievalStartCallback = (query: string) => void;
 type RetrievalEndCallback = (documents: Document[]) => void;
 
 // Custom Retriever class extending SupabaseHybridSearch for potential future customizations
-export class CustomRetriever extends SupabaseHybridSearch {}
+// export class CustomRetriever extends SupabaseHybridSearch {} // Can remove if not adding customizations
 
-// Function to get the custom retriever instance
+// Function to get the custom retriever instance - NOW RETURNS SupabaseHybridSearch
 export async function getCustomRetriever(
   supabaseClient: SupabaseClient,
   embeddings: Embeddings,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _namespace: string, // Prefix with _ to indicate unused parameter
+  _namespace: string, // Prefix with _ to indicate unused parameter - Namespace handled via filter usually
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _retrievalStartCallback: RetrievalStartCallback, // Prefix with _
+  _retrievalStartCallback: RetrievalStartCallback, // Prefix with _ - Callbacks handled by RunnableConfig
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _retrievalEndCallback: RetrievalEndCallback,     // Prefix with _
-): Promise<HydeRetriever> { // Return HydeRetriever type
-  // Instantiate the LLM for HyDE. Use a temperature of 0 for factual generation.
-  // TODO: Make the model name configurable
-  const llmForHyde = await loadChatModel("openai/gpt-3.5-turbo", 0); // Call with model name and temperature
+  _retrievalEndCallback: RetrievalEndCallback,     // Prefix with _ - Callbacks handled by RunnableConfig
+): Promise<SupabaseHybridSearch> { // Update Return Type
+  
+  // REMOVED LLM loading for HyDE
+  // const llmForHyde = await loadChatModel("openai/gpt-3.5-turbo", 0); 
 
-  // Instantiate the VectorStore (needed by HydeRetriever)
-  const vectorStore = new SupabaseVectorStore(embeddings, {
+  // REMOVED VectorStore instantiation (Hybrid Search handles this)
+  // const vectorStore = new SupabaseVectorStore(embeddings, {
+  //   client: supabaseClient,
+  //   tableName: 'documents',
+  //   queryName: 'match_documents',
+  // });
+
+  // Instantiate SupabaseHybridSearch
+  const hybridRetriever = new SupabaseHybridSearch(embeddings, {
     client: supabaseClient,
-    tableName: 'documents',
-    queryName: 'match_documents', // Use the similarity query name
-    // Note: Namespace/filtering for HyDE happens during retrieval call if needed,
-    // or potentially via prompt engineering for the LLM.
+    // Similarity/Vector Search arguments
+    similarityK: 2, // How many similarity results to fetch. Default: 2
+    similarityQueryName: "match_documents", // Function name for similarity search
+    // Keyword/Full-text Search arguments
+    keywordK: 2, // How many keyword results to fetch. Default: 2
+    keywordQueryName: "kw_match_documents", // Function name for keyword search (ensure this function exists in your DB!)
+    tableName: "documents", // Table name for searches
   });
 
-  // Instantiate the HydeRetriever, passing the VectorStore
-  const hydeRetriever: HydeRetriever = new HydeRetriever({ 
-    vectorStore: vectorStore, // Pass the actual VectorStore instance
-    llm: llmForHyde,
-    // You can configure other HydeRetriever options here, e.g.:
-    // k: 5, // How many docs HyDE retrieves based on hypothetical doc
-    // promptTemplate: "websearch", // Or a custom prompt
-  });
+  // REMOVED HydeRetriever instantiation
+  // const hydeRetriever: HydeRetriever = new HydeRetriever({ 
+  //   vectorStore: vectorStore, 
+  //   llm: llmForHyde,
+  // });
 
-  // Note: We are returning the HydeRetriever directly. 
-  // The SupabaseHybridSearch retriever is not directly used by HyDE in this setup.
-  // If hybrid search is *also* needed alongside HyDE, the architecture
-  // in createRetrievalChain/retrieveDocuments would need to combine them.
-
-  return hydeRetriever; // Return the HydeRetriever instance
+  return hybridRetriever; // Return the SupabaseHybridSearch instance
 }
 
 // Removed unused combineDocuments function
@@ -74,7 +76,7 @@ export async function getCustomRetriever(
 // Removed unused formatDocs function
 
 // Type definitions for conversation history
-type ConversationalRetrievalChainInput = {
+export type ConversationalRetrievalChainInput = {
   chat_history: BaseMessage[] | string;
   question: string;
   namespace: string; // Add namespace here
@@ -92,11 +94,11 @@ export async function createRetrievalChain(
   const getRetrieverForNamespace = async (
     namespace: string,
     config?: RunnableConfig,
-  ): Promise<HydeRetriever> => {
+  ): Promise<SupabaseHybridSearch> => { // UPDATE Return Type
     console.log(`Using namespace: ${namespace}`);
 
     // Forward declaration for baseRetriever to be used in callbacks
-    let baseRetriever: HydeRetriever;
+    let baseRetriever: SupabaseHybridSearch; // UPDATE Type
 
     // Define callbacks from config or use defaults
     const startCb = config?.callbacks
@@ -165,8 +167,11 @@ export async function createRetrievalChain(
             filter: input.queryFilters
            }
          }; 
+        // namespaceRetriever is now SupabaseHybridSearch
         const namespaceRetriever = await getRetrieverForNamespace(input.namespace, config);
         // Invoke the retriever with the question and the config containing callbacks AND filter
+        // Note: SupabaseHybridSearch might need filter applied differently if configurable.filter isn't automatically handled.
+        // For now, assume it might work or we'll adjust if needed.
         return namespaceRetriever.invoke(input.question, config);
       },
       question: (input: any) => input.question, // Pass question through - Added any type
